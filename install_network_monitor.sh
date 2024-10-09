@@ -8,16 +8,27 @@ echo "Starting installation of Enhanced Network Monitor..."
 echo "deb https://packages.grafana.com/oss/deb stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
 wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
 
+# Remove old speedtest if present
+sudo rm -f /etc/apt/sources.list.d/speedtest.list
+sudo apt-get update
+sudo apt-get remove -y speedtest speedtest-cli
+
+# Install curl if not already installed
+sudo apt-get install -y curl
+
+# Add Ookla's official speedtest repository
+curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
+
 # Update and install required packages
-sudo apt update
-sudo apt install -y python3-pip python3-venv influxdb grafana speedtest-cli
+sudo apt-get update
+sudo apt-get install -y python3-pip python3-venv influxdb grafana speedtest
 
 # Create a virtual environment
 python3 -m venv ~/network_monitor_env
 
 # Activate the virtual environment and install Python dependencies
 source ~/network_monitor_env/bin/activate
-pip install influxdb speedtest-cli
+pip install influxdb
 
 # Start and enable InfluxDB and Grafana services
 sudo systemctl start influxdb
