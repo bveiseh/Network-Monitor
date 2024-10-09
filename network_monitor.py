@@ -218,10 +218,8 @@ def generate_network_report(averages):
     - Latency Download (High): {averages['speed_test']['latency_download_high']:.2f} ms
     - Latency Upload (High): {averages['speed_test']['latency_upload_high']:.2f} ms
 
-    Previous reports:
-    {previous_reports_text}
 
-    Provide a brief summary (2-3 sentences maximum) focusing on significant deviations from the standards or notable performance of this network. You are an AI network monitoring system. Highlight any metrics that are outside the expected range leaving a larger margin for fluctuations, looking at trends over time in the data. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgment, even when comparing to network standards, based on general understanding of networking. Be concise and to the point, but also be slightly humorous. You are monitoring the network of Brandon's home, and you work for Brandon. Consider the previous reports when analyzing trends and changes in network performance. Use the speedtest latency metrics as an indicator of buffer bloat, comparing idle latency to download and upload latencies.
+    Provide a brief summary (2-3 sentences maximum) focusing on significant deviations from the standards or notable performance of this network. You are an AI network monitoring system. Highlight any metrics that are outside the expected range leaving a larger margin for fluctuations, looking at trends over time in the data. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgment, even when comparing to network standards, based on general understanding of networking. Be concise and to the point, but also be slightly humorous. You are monitoring the network of Brandon's home, and you work for Brandon. Use the speedtest latency metrics as an indicator of buffer bloat, comparing idle latency to download and upload latencies.
     """
 
     try:
