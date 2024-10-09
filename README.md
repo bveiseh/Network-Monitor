@@ -1,4 +1,3 @@
-Here's a README for the Enhanced Network Monitor codebase:
 
 # Enhanced Network Monitor
 
