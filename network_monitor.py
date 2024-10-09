@@ -174,29 +174,29 @@ def setup_grafana_dashboard():
     logging.info("Grafana dashboard setup is not needed as the configuration is saved elsewhere.")
     pass
 
-def get_last_hour_averages():
-    """Query InfluxDB for the average values of all metrics over the last hour."""
+def get_last_two_hours_averages():
+    """Query InfluxDB for the average values of all metrics over the last two hours."""
     query = """
     SELECT MEAN("min") as min, MEAN("avg") as avg, MEAN("max") as max, MEAN("mdev") as mdev, MEAN("packet_loss") as packet_loss
     FROM "latency"
-    WHERE time > now() - 1h
-    GROUP BY time(1h) fill(none)
+    WHERE time > now() - 2h
+    GROUP BY time(2h) fill(none)
     """
     latency_result = client.query(query)
     
     query = """
     SELECT MEAN("download") as download, MEAN("upload") as upload, MEAN("ping") as ping, MEAN("jitter") as jitter
     FROM "speed_test"
-    WHERE time > now() - 1h
-    GROUP BY time(1h) fill(none)
+    WHERE time > now() - 2h
+    GROUP BY time(2h) fill(none)
     """
     speed_result = client.query(query)
     
     query = """
     SELECT MEAN("min") as min, MEAN("avg") as avg, MEAN("max") as max, MEAN("mdev") as mdev
     FROM "buffer_bloat"
-    WHERE time > now() - 1h
-    GROUP BY time(1h) fill(none)
+    WHERE time > now() - 2h
+    GROUP BY time(2h) fill(none)
     """
     buffer_bloat_result = client.query(query)
     
@@ -255,7 +255,7 @@ def generate_network_report(averages):
 
     These standards have a normal deviation of about 5%.
 
-    Provide a brief summary (2-3 sentences) focusing on significant deviations from the standards or notable performance. Highlight any metrics that are outside the expected range, considering the 5% deviation rule. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgement, even when comparing to network standards, based off of general understanding of networking.
+    Provide a brief summary (2-3 sentences maximum and no more) focusing on significant deviations from the standards or notable performance. Highlight any metrics that are outside the expected range, considering the 5% deviation rule. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgement, even when comparing to network standards, based off of general understanding of networking.
     """
 
     try:
@@ -346,7 +346,7 @@ def main():
         try:
             current_time = int(time.time())
             
-            # Measure and write latency for both targets (now runs every iteration)
+            # Measure and write latency for both targets (runs every second)
             latency_results = [measure_latency(target) for target in PING_TARGETS]
             latency_results = [r for r in latency_results if r is not None]
             
@@ -364,26 +364,30 @@ def main():
 
             # Run speed test every hour (3600 seconds)
             if current_time - last_speed_test_time >= 3600:
+                logging.info("Starting hourly speed test")
                 speed = run_speed_test()
                 if speed:
                     write_to_influxdb("speed_test", speed)
                     logging.info(f"Wrote speed test results to InfluxDB: {speed}")
                 last_speed_test_time = current_time
+                logging.info("Completed hourly speed test")
 
             # Run buffer bloat test every hour (3600 seconds)
             if current_time - last_buffer_bloat_test_time >= 3600:
+                logging.info("Starting hourly buffer bloat test")
                 buffer_bloat = measure_buffer_bloat()
                 if buffer_bloat:
                     write_to_influxdb("buffer_bloat", buffer_bloat)
                     logging.info(f"Wrote buffer bloat results to InfluxDB: {buffer_bloat}")
                 last_buffer_bloat_test_time = current_time
+                logging.info("Completed hourly buffer bloat test")
 
-            # Generate and write network report every minute
-            if current_time - last_report_time >= 60:
-                averages = get_last_hour_averages()
+            # Generate and write network report every 15 minutes
+            if current_time - last_report_time >= 900:  # 900 seconds = 15 minutes
+                averages = get_last_two_hours_averages()
                 report = generate_network_report(averages)
                 write_report_to_influxdb(report)
-                logging.info(f"Generated and wrote network report to InfluxDB:\n{report}")  # Log the entire cleaned report
+                logging.info(f"Generated and wrote network report to InfluxDB:\n{report}")
                 last_report_time = current_time
 
             # Purge old data daily
@@ -394,7 +398,7 @@ def main():
         except Exception as e:
             logging.error(f"Unexpected error in main loop: {str(e)}")
 
-        time.sleep(60)  # Wait for 60 seconds before the next measurement
+        time.sleep(1)  # Wait for 1 second before the next measurement
 
 if __name__ == "__main__":
     logging.info("Starting Enhanced Network Monitor with LLM-generated Reports and Data Retention")
