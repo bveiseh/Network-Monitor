@@ -207,6 +207,7 @@ def generate_network_report(averages):
     5. Do not suggest improvements.
     6. Focus on trends over time, considering previous reports.
     7. Use speedtest latency metrics as an indicator of buffer bloat.
+    8. Look for trends in the data over time, like many moderate ping spikes. One or two extreme readings of any metric can be attributed to normal network fluctuations and should not be highlighted.
 
     Remember, you are an AI monitoring Brandon's home network. Keep your analysis extremely brief - this is just a quick summary of network health.
 
@@ -233,7 +234,7 @@ def generate_network_report(averages):
     - Download: 930Mbps
     - Upload: 40Mbps
     - Ping: 20ms
-    These are maximum speeds, actual speeds may be in the range of 75% of those speeds at any given time. A moderate amount of buffer bloat is expected, but not extreme values, do not highlight buffer bloat unless it is extreme.
+    These are maximum speeds, actual speeds may be in the range of 75% of those speeds at any given time. A moderate amount of buffer bloat is expected, but not extreme values, do not highlight buffer bloat unless it is extreme. 
     
     Previous reports:
     {previous_reports_text}
