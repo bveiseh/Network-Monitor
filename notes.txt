@@ -1,0 +1,10 @@
+sudo systemctl restart network-monitor.service
+
+sudo systemctl status network-monitor.service
+
+sudo systemctl stop network-monitor.service
+
+sudo systemctl start network-monitor.service
+
+sudo systemctl enable network-monitor.service
+
