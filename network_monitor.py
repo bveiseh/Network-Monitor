@@ -187,17 +187,43 @@ def clean_report_text(text):
     cleaned = cleaned.rstrip('\n') + '\n'
     return cleaned
 
+def get_last_two_hours_data():
+    """Query InfluxDB for the last two hours of data for all metrics."""
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(hours=2)
+    
+    query_latency = f"""
+    SELECT "min", "avg", "max", "mdev", "packet_loss"
+    FROM "latency"
+    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
+    """
+    
+    query_speed = f"""
+    SELECT "download", "upload", "ping"
+    FROM "speed_test"
+    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
+    """
+    
+    latency_result = client.query(query_latency)
+    speed_result = client.query(query_speed)
+    
+    return {
+        'latency': list(latency_result.get_points()),
+        'speed_test': list(speed_result.get_points())
+    }
+
 def generate_network_report(averages):
     """Generate a network report using Ollama."""
-    # Fetch the last two reports from the database
-    query = 'SELECT content, time FROM "network_report" WHERE "report_type" = \'latest\' ORDER BY time DESC LIMIT 2'
+    # Fetch the last report from the database
+    query = 'SELECT content, time FROM "network_report" WHERE "report_type" = \'latest\' ORDER BY time DESC LIMIT 1'
     result = client.query(query)
-    previous_reports = [{"time": point['time'], "content": point['content']} for point in result.get_points()]
-    
-    previous_reports_text = "\n\n".join([f"Report from {report['time']}:\n{report['content']}" for report in previous_reports])
+    previous_report = next(result.get_points(), None)
+
+    # Get the last two hours of raw data
+    last_two_hours_data = get_last_two_hours_data()
 
     prompt = f"""
-    Generate a short, concise network report based on the following average metrics from the last two hours. Your response should be EXACTLY 2 sentences maximum, focusing only on significant deviations from the standards or notable performance of this network. Do not provide a separate summary.
+    Generate a short, concise network report based on the following average metrics from the last two hours and raw data from the last two hours. Your response should be EXACTLY 2 sentences maximum, focusing only on significant deviations from the standards or notable performance of this network. Do not provide a separate summary.
 
     Rules:
     1. Highlight only metrics that are significantly outside the expected range.
@@ -205,12 +231,16 @@ def generate_network_report(averages):
     3. Be slightly humorous but professional.
     4. Do not read out statistics or numbers.
     5. Do not suggest improvements.
-    6. Focus on trends over time, considering previous reports.
-    7. Use speedtest latency metrics as an indicator of buffer bloat.
-    8. Look for trends in the data over time, like many moderate ping spikes. One or two extreme readings of any metric can be attributed to normal network fluctuations and should not be highlighted.
+    6. Consider the previous report for trends, but only mention them if there's a significant change or continuation of a concerning trend.
+    7. Look for trends in the data over time, like many moderate ping spikes. One or two extreme readings of any metric can be attributed to normal network fluctuations and should not be highlighted.
+    8. If there are no significant trends or changes from the previous report, focus solely on the current network state.
+    9. Focus only on latency, speed, and packet loss.
+    10. Do not mention buffer bloat. It is not a concern. Never mention it.
+    11. Average expected latencies are within 50ms of the normal speed test ping. If you are seeing spikes above 60ms, that is a concern and should be highlighted.
 
     Remember, you are an AI monitoring Brandon's home network. Keep your analysis extremely brief - this is just a quick summary of network health.
 
+    Two-hour averages:
     Latency:
     - Min: {averages['latency']['min']:.2f} ms
     - Avg: {averages['latency']['avg']:.2f} ms
@@ -222,22 +252,24 @@ def generate_network_report(averages):
     - Download: {averages['speed_test']['download']:.2f} Mbps
     - Upload: {averages['speed_test']['upload']:.2f} Mbps
     - Ping: {averages['speed_test']['ping']:.2f} ms
-    - Jitter: {averages['speed_test']['jitter']:.2f} ms
-    - Latency Idle: {averages['speed_test']['latency_idle']:.2f} ms
-    - Latency Download: {averages['speed_test']['latency_download']:.2f} ms
-    - Latency Upload: {averages['speed_test']['latency_upload']:.2f} ms
-    - Latency Idle (High): {averages['speed_test']['latency_idle_high']:.2f} ms
-    - Latency Download (High): {averages['speed_test']['latency_download_high']:.2f} ms
-    - Latency Upload (High): {averages['speed_test']['latency_upload_high']:.2f} ms
+
+    Raw data from the last two hours (up to 100 data points for each metric):
+    Latency:
+    {json.dumps(last_two_hours_data['latency'][:100], indent=2)}
+
+    Speed Test:
+    {json.dumps([{k: v for k, v in d.items() if k in ['download', 'upload', 'ping']} for d in last_two_hours_data['speed_test'][:100]], indent=2)}
 
     Average ISP Speeds:
     - Download: 930Mbps
     - Upload: 40Mbps
     - Ping: 20ms
-    These are maximum speeds, actual speeds may be in the range of 75% of those speeds at any given time. A moderate amount of buffer bloat is expected, but not extreme values, do not highlight buffer bloat unless it is extreme. 
+    These are maximum speeds, actual speeds may be in the range of 75% of those speeds at any given time.
     
-    Previous reports:
-    {previous_reports_text}
+    Previous report:
+    {previous_report['content'] if previous_report else "No previous report available."}
+
+    IMPORTANT: Your response MUST be exactly two sentences long. Do not include any additional explanations, recommendations, or summaries beyond these two sentences. Focus solely on the most significant network health insights related to latency, speed, and packet loss, mentioning trends only if they are significant and ongoing.
     """
 
     try:
@@ -246,7 +278,8 @@ def generate_network_report(averages):
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.2
+                "temperature": 0.1,
+                "max_tokens": 100  # Limit the response length
             }
         })
         response.raise_for_status()
