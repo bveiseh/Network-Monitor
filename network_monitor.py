@@ -130,62 +130,6 @@ def run_speed_test():
         logging.error(f"Unexpected error running speed test: {str(e)}")
         return None
 
-def run_speed_test_with_latency():
-    try:
-        # Start a thread to measure latency during the speed test
-        latency_results = []
-        stop_latency_thread = threading.Event()
-        latency_thread = threading.Thread(target=measure_latency_during_test, 
-                                          args=(latency_results, stop_latency_thread))
-        latency_thread.start()
-
-        # Run the speed test
-        output = subprocess.check_output(['speedtest', '-f', 'json'], universal_newlines=True)
-        result = json.loads(output)
-
-        # Stop the latency measurement thread
-        stop_latency_thread.set()
-        latency_thread.join()
-
-        # Process speed test results
-        speed_result = {
-            'download': result['download']['bandwidth'] * 8 / 1_000_000,  # Convert to Mbps
-            'upload': result['upload']['bandwidth'] * 8 / 1_000_000,  # Convert to Mbps
-            'ping': result['ping']['latency'],
-            'jitter': result['ping']['jitter'],
-        }
-
-        # Process latency results
-        if latency_results:
-            latencies = [r['avg'] for r in latency_results if r]
-            latency_result = {
-                'min': min(latencies),
-                'avg': sum(latencies) / len(latencies),
-                'max': max(latencies),
-                'mdev': calculate_mdev(latencies)
-            }
-        else:
-            latency_result = None
-
-        return speed_result, latency_result
-    except Exception as e:
-        logging.error(f"Error running speed test with latency: {str(e)}")
-        return None, None
-
-def measure_latency_during_test(results, stop_event):
-    while not stop_event.is_set():
-        latency = measure_latency('8.8.8.8')
-        if latency:
-            results.append(latency)
-        time.sleep(1)
-
-def calculate_mdev(latencies):
-    if len(latencies) < 2:
-        return 0
-    mean = sum(latencies) / len(latencies)
-    variance = sum((x - mean) ** 2 for x in latencies) / (len(latencies) - 1)
-    return (variance ** 0.5)
-
 def write_to_influxdb(measurement, fields):
     json_body = [
         {
@@ -215,20 +159,14 @@ def get_last_two_hours_averages():
     latency_result = client.query(query)
     
     query = """
-    SELECT MEAN("download") as download, MEAN("upload") as upload, MEAN("ping") as ping, MEAN("jitter") as jitter
+    SELECT MEAN("download") as download, MEAN("upload") as upload, MEAN("ping") as ping, MEAN("jitter") as jitter,
+           MEAN("latency_idle") as latency_idle, MEAN("latency_download") as latency_download, MEAN("latency_upload") as latency_upload,
+           MEAN("latency_idle_high") as latency_idle_high, MEAN("latency_download_high") as latency_download_high, MEAN("latency_upload_high") as latency_upload_high
     FROM "speed_test"
     WHERE time > now() - 2h
     GROUP BY time(2h) fill(none)
     """
     speed_result = client.query(query)
-    
-    query = """
-    SELECT MEAN("min") as min, MEAN("avg") as avg, MEAN("max") as max, MEAN("mdev") as mdev
-    FROM "buffer_bloat"
-    WHERE time > now() - 2h
-    GROUP BY time(2h) fill(none)
-    """
-    buffer_bloat_result = client.query(query)
     
     # Combine results
     averages = {}
@@ -236,8 +174,6 @@ def get_last_two_hours_averages():
         averages['latency'] = next(points)
     for measurement, points in speed_result.items():
         averages['speed_test'] = next(points)
-    for measurement, points in buffer_bloat_result.items():
-        averages['buffer_bloat'] = next(points)
     
     return averages
 
@@ -275,17 +211,17 @@ def generate_network_report(averages):
     - Upload: {averages['speed_test']['upload']:.2f} Mbps
     - Ping: {averages['speed_test']['ping']:.2f} ms
     - Jitter: {averages['speed_test']['jitter']:.2f} ms
-
-    Buffer Bloat:
-    - Min: {averages['buffer_bloat']['min']:.2f} ms
-    - Avg: {averages['buffer_bloat']['avg']:.2f} ms
-    - Max: {averages['buffer_bloat']['max']:.2f} ms
-    - Mdev: {averages['buffer_bloat']['mdev']:.2f} ms
+    - Latency Idle: {averages['speed_test']['latency_idle']:.2f} ms
+    - Latency Download: {averages['speed_test']['latency_download']:.2f} ms
+    - Latency Upload: {averages['speed_test']['latency_upload']:.2f} ms
+    - Latency Idle (High): {averages['speed_test']['latency_idle_high']:.2f} ms
+    - Latency Download (High): {averages['speed_test']['latency_download_high']:.2f} ms
+    - Latency Upload (High): {averages['speed_test']['latency_upload_high']:.2f} ms
 
     Previous reports:
     {previous_reports_text}
 
-    Provide a brief summary (2-3 sentences maximum) focusing on significant deviations from the standards or notable performance of this network. You are an AI network monitoring system. Highlight any metrics that are outside the expected range leaving a larger margin for fluctuations, looking at trends over time in the data. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgment, even when comparing to network standards, based on general understanding of networking. Be concise and to the point, but also be slightly humorous. You are monitoring the network of Brandon's home, and you work for Brandon. Consider the previous reports when analyzing trends and changes in network performance.
+    Provide a brief summary (2-3 sentences maximum) focusing on significant deviations from the standards or notable performance of this network. You are an AI network monitoring system. Highlight any metrics that are outside the expected range leaving a larger margin for fluctuations, looking at trends over time in the data. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgment, even when comparing to network standards, based on general understanding of networking. Be concise and to the point, but also be slightly humorous. You are monitoring the network of Brandon's home, and you work for Brandon. Consider the previous reports when analyzing trends and changes in network performance. Use the speedtest latency metrics as an indicator of buffer bloat, comparing idle latency to download and upload latencies.
     """
 
     try:
@@ -407,7 +343,6 @@ def main():
     setup_data_retention_policy()
     
     last_speed_test_time = 0
-    last_buffer_bloat_test_time = 0
     last_report_time = 0
     last_purge_time = 0
     
@@ -431,7 +366,7 @@ def main():
             else:
                 logging.warning("No valid latency results to write to InfluxDB")
 
-            # Run regular speed test every hour (3600 seconds)
+            # Run speed test every hour (3600 seconds)
             if current_time - last_speed_test_time >= 3600:
                 logging.info("Starting hourly speed test")
                 speed = run_speed_test()
@@ -440,17 +375,6 @@ def main():
                     logging.info(f"Wrote speed test results to InfluxDB: {speed}")
                 last_speed_test_time = current_time
                 logging.info("Completed hourly speed test")
-
-            # Run buffer bloat test every hour, offset by 30 minutes from the regular speed test
-            if current_time - last_buffer_bloat_test_time >= 3600 and current_time - last_speed_test_time >= 1800:
-                logging.info("Starting hourly buffer bloat test")
-                speed_result, latency_result = run_speed_test_with_latency()
-                if speed_result and latency_result:
-                    combined_result = {**speed_result, **latency_result}
-                    write_to_influxdb("buffer_bloat", combined_result)
-                    logging.info(f"Wrote buffer bloat results to InfluxDB: {combined_result}")
-                last_buffer_bloat_test_time = current_time
-                logging.info("Completed hourly buffer bloat test")
 
             # Generate and write network report every 15 minutes
             if current_time - last_report_time >= 900:  # 900 seconds = 15 minutes
@@ -471,6 +395,6 @@ def main():
         time.sleep(1)  # Wait for 1 second before the next measurement
 
 if __name__ == "__main__":
-    logging.info("Starting Enhanced Network Monitor with Buffer Bloat Testing")
+    logging.info("Starting Enhanced Network Monitor with Speedtest Latency Metrics")
     client = InfluxDBClient(host='localhost', port=8086, database=INFLUXDB_DATABASE)
     main()
