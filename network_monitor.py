@@ -7,6 +7,7 @@ from collections import deque
 import json
 import requests
 import re
+import threading
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -129,32 +130,61 @@ def run_speed_test():
         logging.error(f"Unexpected error running speed test: {str(e)}")
         return None
 
-def measure_buffer_bloat():
+def run_speed_test_with_latency():
     try:
-        # Run iperf3 test to simulate network load
-        subprocess.Popen(['iperf3', '-c', 'iperf.he.net', '-t', '30', '-P', '3'], 
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        # Measure latency during the iperf3 test
-        output = subprocess.check_output(['ping', '-c', '30', '-i', '1', '8.8.8.8'], universal_newlines=True)
-        
-        latencies = [float(line.split('time=')[1].split()[0]) for line in output.splitlines() if 'time=' in line]
-        
-        if not latencies:
-            return None
-        
-        return {
-            'min': min(latencies),
-            'avg': sum(latencies) / len(latencies),
-            'max': max(latencies),
-            'mdev': float(output.splitlines()[-1].split('mdev = ')[1].split('/')[3].rstrip(' ms'))
+        # Start a thread to measure latency during the speed test
+        latency_results = []
+        stop_latency_thread = threading.Event()
+        latency_thread = threading.Thread(target=measure_latency_during_test, 
+                                          args=(latency_results, stop_latency_thread))
+        latency_thread.start()
+
+        # Run the speed test
+        output = subprocess.check_output(['speedtest', '-f', 'json'], universal_newlines=True)
+        result = json.loads(output)
+
+        # Stop the latency measurement thread
+        stop_latency_thread.set()
+        latency_thread.join()
+
+        # Process speed test results
+        speed_result = {
+            'download': result['download']['bandwidth'] * 8 / 1_000_000,  # Convert to Mbps
+            'upload': result['upload']['bandwidth'] * 8 / 1_000_000,  # Convert to Mbps
+            'ping': result['ping']['latency'],
+            'jitter': result['ping']['jitter'],
         }
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Error measuring buffer bloat: {e.output}")
-        return None
+
+        # Process latency results
+        if latency_results:
+            latencies = [r['avg'] for r in latency_results if r]
+            latency_result = {
+                'min': min(latencies),
+                'avg': sum(latencies) / len(latencies),
+                'max': max(latencies),
+                'mdev': calculate_mdev(latencies)
+            }
+        else:
+            latency_result = None
+
+        return speed_result, latency_result
     except Exception as e:
-        logging.error(f"Unexpected error measuring buffer bloat: {str(e)}")
-        return None
+        logging.error(f"Error running speed test with latency: {str(e)}")
+        return None, None
+
+def measure_latency_during_test(results, stop_event):
+    while not stop_event.is_set():
+        latency = measure_latency('8.8.8.8')
+        if latency:
+            results.append(latency)
+        time.sleep(1)
+
+def calculate_mdev(latencies):
+    if len(latencies) < 2:
+        return 0
+    mean = sum(latencies) / len(latencies)
+    variance = sum((x - mean) ** 2 for x in latencies) / (len(latencies) - 1)
+    return (variance ** 0.5)
 
 def write_to_influxdb(measurement, fields):
     json_body = [
@@ -222,9 +252,16 @@ def clean_report_text(text):
     return cleaned
 
 def generate_network_report(averages):
-    """Generate a network report using Ollama."""
-    prompt = f"""
-    Generate a short, concise network report based on the following average metrics from the last hour:
+    """Generate a network report using Ollama, with self-reflection."""
+    # Fetch the last two reports from the database
+    query = 'SELECT content, time FROM "network_report" WHERE "report_type" = \'latest\' ORDER BY time DESC LIMIT 2'
+    result = client.query(query)
+    previous_reports = [{"time": point['time'], "content": point['content']} for point in result.get_points()]
+    
+    previous_reports_text = "\n\n".join([f"Report from {report['time']}:\n{report['content']}" for report in previous_reports])
+
+    initial_prompt = f"""
+    Generate a short, concise network report based on the following average metrics from the last two hours:
 
     Latency:
     - Min: {averages['latency']['min']:.2f} ms
@@ -245,23 +282,17 @@ def generate_network_report(averages):
     - Max: {averages['buffer_bloat']['max']:.2f} ms
     - Mdev: {averages['buffer_bloat']['mdev']:.2f} ms
 
-    Network Standards:
-    - Packet Loss: 0-10% (max)
-    - Upload Speed: ~40 Mbps
-    - Download Speed: ~930 Mbps
-    - Buffer Bloat: ~13 ms
-    - Jitter: ≤2 ms
-    - Latency: 12-16 ms
+    Previous reports:
+    {previous_reports_text}
 
-    These standards have a normal deviation of about 5%.
-
-    Provide a brief summary (2-3 sentences maximum and no more) focusing on significant deviations from the standards or notable performance. Highlight any metrics that are outside the expected range, considering the 5% deviation rule. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgement, even when comparing to network standards, based off of general understanding of networking.
+    Provide a brief summary (2-3 sentences maximum) focusing on significant deviations from the standards or notable performance of this network. You are an AI network monitoring system. Highlight any metrics that are outside the expected range leaving a larger margin for fluctuations, looking at trends over time in the data. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgment, even when comparing to network standards, based on general understanding of networking. Be concise and to the point, but also be slightly humorous. You are monitoring the network of Brandon's home, and you work for Brandon. Consider the previous reports when analyzing trends and changes in network performance.
     """
 
     try:
+        # Generate initial report
         response = requests.post(OLLAMA_URL, json={
             "model": OLLAMA_MODEL,
-            "prompt": prompt,
+            "prompt": initial_prompt,
             "stream": False,
             "options": {
                 "temperature": 0.2
@@ -269,11 +300,48 @@ def generate_network_report(averages):
         })
         response.raise_for_status()
         
-        response_data = response.json()
-        report = response_data.get('response', '').strip()
-        report = clean_report_text(report)  # Clean up the report text
+        initial_report = response.json().get('response', '').strip()
+
+        # Self-reflection prompt
+        reflection_prompt = f"""
+        You are an AI tasked with self-reflection and error correction. Review the following network report you just generated:
+
+        {initial_report}
+
+        Now, critically analyze this report:
+        1. Is all the information provided accurate and based solely on the given metrics?
+        2. Did you hallucinate or add any information not directly supported by the data?
+        3. Is the tone appropriate and slightly humorous as requested?
+        4. Does the report focus on significant deviations and trends as instructed?
+
+        If you find any issues, provide a corrected version of the report. If no issues are found, state that the original report is accurate and appropriate.
+        """
+
+        # Perform self-reflection
+        reflection_response = requests.post(OLLAMA_URL, json={
+            "model": OLLAMA_MODEL,
+            "prompt": reflection_prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.2
+            }
+        })
+        reflection_response.raise_for_status()
         
-        return report
+        reflection_result = reflection_response.json().get('response', '').strip()
+
+        # Extract the final report from the reflection result
+        if "original report is accurate and appropriate" in reflection_result.lower():
+            final_report = initial_report
+        else:
+            # Extract the corrected report from the reflection result
+            corrected_report_start = reflection_result.find("Corrected report:")
+            if corrected_report_start != -1:
+                final_report = reflection_result[corrected_report_start + len("Corrected report:"):].strip()
+            else:
+                final_report = initial_report  # Fallback to initial report if no correction is found
+
+        return clean_report_text(final_report)
     except requests.RequestException as e:
         logging.error(f"Error generating network report: {str(e)}")
         return "Unable to generate network report due to an error."
@@ -282,7 +350,9 @@ def generate_network_report(averages):
         return "Unable to parse the network report response."
 
 def write_report_to_influxdb(report):
-    """Write the generated report to InfluxDB, overwriting the previous report."""
+    """Write the generated report to InfluxDB."""
+    current_time = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    
     json_body = [
         {
             "measurement": "network_report",
@@ -290,18 +360,17 @@ def write_report_to_influxdb(report):
                 "host": "raspberry_pi",
                 "report_type": "latest"
             },
-            "time": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+            "time": current_time,
             "fields": {
-                "content": report  # Change 'report' to 'content'
+                "content": report
             }
         }
     ]
     
-    # Delete the previous report before writing the new one
-    client.query('DELETE FROM "network_report" WHERE "report_type" = \'latest\'')
-    
     # Write the new report
     client.write_points(json_body)
+
+    logging.info(f"Wrote new report to InfluxDB")
 
 def setup_data_retention_policy():
     client = InfluxDBClient(host='localhost', port=8086)
@@ -362,7 +431,7 @@ def main():
             else:
                 logging.warning("No valid latency results to write to InfluxDB")
 
-            # Run speed test every hour (3600 seconds)
+            # Run regular speed test every hour (3600 seconds)
             if current_time - last_speed_test_time >= 3600:
                 logging.info("Starting hourly speed test")
                 speed = run_speed_test()
@@ -372,13 +441,14 @@ def main():
                 last_speed_test_time = current_time
                 logging.info("Completed hourly speed test")
 
-            # Run buffer bloat test every hour (3600 seconds)
-            if current_time - last_buffer_bloat_test_time >= 3600:
+            # Run buffer bloat test every hour, offset by 30 minutes from the regular speed test
+            if current_time - last_buffer_bloat_test_time >= 3600 and current_time - last_speed_test_time >= 1800:
                 logging.info("Starting hourly buffer bloat test")
-                buffer_bloat = measure_buffer_bloat()
-                if buffer_bloat:
-                    write_to_influxdb("buffer_bloat", buffer_bloat)
-                    logging.info(f"Wrote buffer bloat results to InfluxDB: {buffer_bloat}")
+                speed_result, latency_result = run_speed_test_with_latency()
+                if speed_result and latency_result:
+                    combined_result = {**speed_result, **latency_result}
+                    write_to_influxdb("buffer_bloat", combined_result)
+                    logging.info(f"Wrote buffer bloat results to InfluxDB: {combined_result}")
                 last_buffer_bloat_test_time = current_time
                 logging.info("Completed hourly buffer bloat test")
 
@@ -401,6 +471,6 @@ def main():
         time.sleep(1)  # Wait for 1 second before the next measurement
 
 if __name__ == "__main__":
-    logging.info("Starting Enhanced Network Monitor with LLM-generated Reports and Data Retention")
+    logging.info("Starting Enhanced Network Monitor with Buffer Bloat Testing")
     client = InfluxDBClient(host='localhost', port=8086, database=INFLUXDB_DATABASE)
     main()
