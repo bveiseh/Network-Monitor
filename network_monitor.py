@@ -37,7 +37,7 @@ GRAFANA_API_KEY = 'glsa_VMUyp1G9lnCSe3gy42Nk0tT0qbUd8N2T_980a759f'
 
 # Ollama configuration
 OLLAMA_URL = "http://100.100.58.42:9090/api/generate"
-OLLAMA_MODEL = "llama3.2"  # Adjust this to the model you want to use
+OLLAMA_MODEL = "llama3.1"  # Adjust this to the model you want to use
 
 def calculate_moving_average(values):
     return sum(values) / len(values) if values else None
@@ -188,7 +188,7 @@ def clean_report_text(text):
     return cleaned
 
 def generate_network_report(averages):
-    """Generate a network report using Ollama, with self-reflection."""
+    """Generate a network report using Ollama."""
     # Fetch the last two reports from the database
     query = 'SELECT content, time FROM "network_report" WHERE "report_type" = \'latest\' ORDER BY time DESC LIMIT 2'
     result = client.query(query)
@@ -196,7 +196,7 @@ def generate_network_report(averages):
     
     previous_reports_text = "\n\n".join([f"Report from {report['time']}:\n{report['content']}" for report in previous_reports])
 
-    initial_prompt = f"""
+    prompt = f"""
     Generate a short, concise network report based on the following average metrics from the last two hours:
 
     Latency:
@@ -218,15 +218,22 @@ def generate_network_report(averages):
     - Latency Download (High): {averages['speed_test']['latency_download_high']:.2f} ms
     - Latency Upload (High): {averages['speed_test']['latency_upload_high']:.2f} ms
 
+    Average ISP Speeds:
+    - Download: 930Mbps
+    - Upload: 40Mbps
+    - Ping: 20ms
+    These are maximum speeds, actual speeds may be in the range of 75% of those speeds at any given time.
+    
+    Previous reports:
+    {previous_reports_text}
 
-    Provide a brief summary (2-3 sentences maximum) focusing on significant deviations from the standards or notable performance of this network. You are an AI network monitoring system. Highlight any metrics that are outside the expected range leaving a larger margin for fluctuations, looking at trends over time in the data. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgment, even when comparing to network standards, based on general understanding of networking. Be concise and to the point, but also be slightly humorous. You are monitoring the network of Brandon's home, and you work for Brandon. Use the speedtest latency metrics as an indicator of buffer bloat, comparing idle latency to download and upload latencies.
+    Provide a brief summary (2 sentences maximum) focusing on significant deviations from the standards or notable performance of this network. You are an AI network monitoring system. Highlight any metrics that are outside the expected range leaving a larger margin for fluctuations, looking at trends over time in the data. Consider the previous reports when writing your new reports as another way to keep track of trends, though minor variations are not notable or required for this report. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgment, even when comparing to network standards, based on general understanding of networking. Be concise and to the point, but also be slightly humorous. You are monitoring the network of Brandon's home, and you work for Brandon. Use the speedtest latency metrics as an indicator of buffer bloat, comparing idle latency to download and upload latencies. Do not read out the statistics and numbers in this report, this is intended to be a narrative summary of the network health. Also, do not suggest improvements, keep your analysis extremely brief, this analysis is just meant to be a quick summary of the network health.
     """
 
     try:
-        # Generate initial report
         response = requests.post(OLLAMA_URL, json={
             "model": OLLAMA_MODEL,
-            "prompt": initial_prompt,
+            "prompt": prompt,
             "stream": False,
             "options": {
                 "temperature": 0.2
@@ -234,48 +241,8 @@ def generate_network_report(averages):
         })
         response.raise_for_status()
         
-        initial_report = response.json().get('response', '').strip()
-
-        # Self-reflection prompt
-        reflection_prompt = f"""
-        You are an AI tasked with self-reflection and error correction. Review the following network report you just generated:
-
-        {initial_report}
-
-        Now, critically analyze this report:
-        1. Is all the information provided accurate and based solely on the given metrics?
-        2. Did you hallucinate or add any information not directly supported by the data?
-        3. Is the tone appropriate and slightly humorous as requested?
-        4. Does the report focus on significant deviations and trends as instructed?
-
-        If you find any issues, provide a corrected version of the report. If no issues are found, state that the original report is accurate and appropriate.
-        """
-
-        # Perform self-reflection
-        reflection_response = requests.post(OLLAMA_URL, json={
-            "model": OLLAMA_MODEL,
-            "prompt": reflection_prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.2
-            }
-        })
-        reflection_response.raise_for_status()
-        
-        reflection_result = reflection_response.json().get('response', '').strip()
-
-        # Extract the final report from the reflection result
-        if "original report is accurate and appropriate" in reflection_result.lower():
-            final_report = initial_report
-        else:
-            # Extract the corrected report from the reflection result
-            corrected_report_start = reflection_result.find("Corrected report:")
-            if corrected_report_start != -1:
-                final_report = reflection_result[corrected_report_start + len("Corrected report:"):].strip()
-            else:
-                final_report = initial_report  # Fallback to initial report if no correction is found
-
-        return clean_report_text(final_report)
+        report = response.json().get('response', '').strip()
+        return clean_report_text(report)
     except requests.RequestException as e:
         logging.error(f"Error generating network report: {str(e)}")
         return "Unable to generate network report due to an error."
