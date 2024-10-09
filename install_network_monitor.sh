@@ -384,6 +384,45 @@ DASHBOARD_JSON=$(cat << 'EOL'
           }
         ],
         "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}
+      },
+      {
+        "title": "Speedtest Latency",
+        "type": "graph",
+        "datasource": "NetworkDB",
+        "targets": [
+          {
+            "query": "SELECT mean(\"ping\") AS \"Ping\", mean(\"jitter\") AS \"Jitter\", mean(\"latency_idle\") AS \"Idle\", mean(\"latency_download\") AS \"Download\", mean(\"latency_upload\") AS \"Upload\", mean(\"latency_idle_high\") AS \"Idle High\", mean(\"latency_download_high\") AS \"Download High\", mean(\"latency_upload_high\") AS \"Upload High\" FROM \"speed_test\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+            "rawQuery": true
+          }
+        ],
+        "yaxes": [{"format": "ms"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "title": "Speedtest Throughput",
+        "type": "graph",
+        "datasource": "NetworkDB",
+        "targets": [
+          {
+            "query": "SELECT mean(\"download\") AS \"Download\", mean(\"upload\") AS \"Upload\" FROM \"speed_test\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+            "rawQuery": true
+          }
+        ],
+        "yaxes": [{"format": "Mbps"}],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "title": "Buffer Bloat",
+        "type": "graph",
+        "datasource": "NetworkDB",
+        "targets": [
+          {
+            "query": "SELECT mean(\"min\") AS \"Min\", mean(\"avg\") AS \"Avg\", mean(\"max\") AS \"Max\", mean(\"mdev\") AS \"Mdev\" FROM \"buffer_bloat\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+            "rawQuery": true
+          }
+        ],
+        "yaxes": [{"format": "ms"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
       }
     ],
     "schemaVersion": 16,

@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 from collections import deque
 import json
+import requests
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,6 +27,11 @@ MOVING_AVERAGE_WINDOW = 5
 
 latency_deque = deque(maxlen=MOVING_AVERAGE_WINDOW)
 speed_deque = deque(maxlen=MOVING_AVERAGE_WINDOW)
+
+# Grafana configuration
+GRAFANA_HOST = 'http://localhost:3000'
+DASHBOARD_UID = 'fe0atovlm7o5cd'
+GRAFANA_API_KEY = 'glsa_VMUyp1G9lnCSe3gy42Nk0tT0qbUd8N2T_980a759f'
 
 def calculate_moving_average(values):
     return sum(values) / len(values) if values else None
@@ -94,13 +100,19 @@ def average_latency_results(results):
 
 def run_speed_test():
     try:
-        # Use the new Speedtest CLI command format
         output = subprocess.check_output(['speedtest', '-f', 'json'], universal_newlines=True)
         result = json.loads(output)
         return {
             'download': result['download']['bandwidth'] * 8 / 1_000_000,  # Convert to Mbps
             'upload': result['upload']['bandwidth'] * 8 / 1_000_000,  # Convert to Mbps
-            'ping': result['ping']['latency']
+            'ping': result['ping']['latency'],
+            'jitter': result['ping']['jitter'],
+            'latency_idle': result['ping']['low'],
+            'latency_download': result['download']['latency']['low'],
+            'latency_upload': result['upload']['latency']['low'],
+            'latency_idle_high': result['ping']['high'],
+            'latency_download_high': result['download']['latency']['high'],
+            'latency_upload_high': result['upload']['latency']['high'],
         }
     except subprocess.CalledProcessError as e:
         logging.error(f"Error running speed test: {e.output}")
@@ -112,26 +124,34 @@ def run_speed_test():
         logging.error(f"Unexpected error running speed test: {str(e)}")
         return None
 
-def write_to_influxdb(measurement, fields):
-    if measurement.startswith('latency'):
-        latency_deque.append(fields)
-        avg_fields = {
-            'min': calculate_moving_average([d['min'] for d in latency_deque]),
-            'avg': calculate_moving_average([d['avg'] for d in latency_deque]),
-            'max': calculate_moving_average([d['max'] for d in latency_deque]),
-            'mdev': calculate_moving_average([d['mdev'] for d in latency_deque]),
-            'packet_loss': calculate_moving_average([d['packet_loss'] for d in latency_deque])
+def measure_buffer_bloat():
+    try:
+        # Run iperf3 test to simulate network load
+        subprocess.Popen(['iperf3', '-c', 'iperf.he.net', '-t', '30', '-P', '3'], 
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Measure latency during the iperf3 test
+        output = subprocess.check_output(['ping', '-c', '30', '-i', '1', '8.8.8.8'], universal_newlines=True)
+        
+        latencies = [float(line.split('time=')[1].split()[0]) for line in output.splitlines() if 'time=' in line]
+        
+        if not latencies:
+            return None
+        
+        return {
+            'min': min(latencies),
+            'avg': sum(latencies) / len(latencies),
+            'max': max(latencies),
+            'mdev': float(output.splitlines()[-1].split('mdev = ')[1].split('/')[3].rstrip(' ms'))
         }
-        fields = avg_fields
-    elif measurement == 'speed_test':
-        speed_deque.append(fields)
-        avg_fields = {
-            'download': calculate_moving_average([d['download'] for d in speed_deque]),
-            'upload': calculate_moving_average([d['upload'] for d in speed_deque]),
-            'ping': calculate_moving_average([d['ping'] for d in speed_deque])
-        }
-        fields = avg_fields
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error measuring buffer bloat: {e.output}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error measuring buffer bloat: {str(e)}")
+        return None
 
+def write_to_influxdb(measurement, fields):
     json_body = [
         {
             "measurement": measurement,
@@ -144,8 +164,83 @@ def write_to_influxdb(measurement, fields):
     ]
     client.write_points(json_body)
 
+def setup_grafana_dashboard():
+    logging.info("Setting up Grafana dashboard")
+    
+    # Create a new dashboard
+    dashboard = {
+        "dashboard": {
+            "id": None,
+            "uid": None,
+            "title": "Network Monitor Dashboard",
+            "tags": ["network", "monitoring"],
+            "timezone": "browser",
+            "schemaVersion": 16,
+            "version": 0,
+            "panels": []
+        },
+        "overwrite": True
+    }
+    
+    # Add Speedtest Latency Panel
+    dashboard["dashboard"]["panels"].append({
+        "title": "Speedtest Latency",
+        "type": "graph",
+        "datasource": "InfluxDB",
+        "targets": [
+            {"measurement": "speed_test", "select": [[{"params": ["ping"], "type": "field"}]]},
+            {"measurement": "speed_test", "select": [[{"params": ["jitter"], "type": "field"}]]},
+            {"measurement": "speed_test", "select": [[{"params": ["latency_idle"], "type": "field"}]]},
+            {"measurement": "speed_test", "select": [[{"params": ["latency_download"], "type": "field"}]]},
+            {"measurement": "speed_test", "select": [[{"params": ["latency_upload"], "type": "field"}]]},
+            {"measurement": "speed_test", "select": [[{"params": ["latency_idle_high"], "type": "field"}]]},
+            {"measurement": "speed_test", "select": [[{"params": ["latency_download_high"], "type": "field"}]]},
+            {"measurement": "speed_test", "select": [[{"params": ["latency_upload_high"], "type": "field"}]]}
+        ],
+        "yaxes": [{"format": "ms"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    })
+    
+    # Add Speedtest Throughput Panel
+    dashboard["dashboard"]["panels"].append({
+        "title": "Speedtest Download/Upload",
+        "type": "graph",
+        "datasource": "InfluxDB",
+        "targets": [
+            {"measurement": "speed_test", "select": [[{"params": ["download"], "type": "field"}]]},
+            {"measurement": "speed_test", "select": [[{"params": ["upload"], "type": "field"}]]}
+        ],
+        "yaxes": [{"format": "Mbps"}],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    })
+    
+    # Add Buffer Bloat Panel
+    dashboard["dashboard"]["panels"].append({
+        "title": "Buffer Bloat",
+        "type": "graph",
+        "datasource": "InfluxDB",
+        "targets": [
+            {"measurement": "buffer_bloat", "select": [[{"params": ["min"], "type": "field"}]]},
+            {"measurement": "buffer_bloat", "select": [[{"params": ["avg"], "type": "field"}]]},
+            {"measurement": "buffer_bloat", "select": [[{"params": ["max"], "type": "field"}]]},
+            {"measurement": "buffer_bloat", "select": [[{"params": ["mdev"], "type": "field"}]]}
+        ],
+        "yaxes": [{"format": "ms"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    })
+    
+    # Save the dashboard configuration to a file
+    with open('/home/pi/peeng/network_dashboard.json', 'w') as f:
+        json.dump(dashboard, f)
+    
+    logging.info("Dashboard configuration saved to /home/pi/peeng/network_dashboard.json")
+    logging.info("You can now import this dashboard in Grafana manually.")
+
 def main():
+    setup_grafana_dashboard()
+    
     last_speed_test_time = 0
+    last_buffer_bloat_test_time = 0
     while True:
         try:
             current_time = int(time.time())
@@ -166,13 +261,21 @@ def main():
             else:
                 logging.warning("No valid latency results to write to InfluxDB")
 
-            # Run speed test every 5 minutes (300 seconds)
-            if current_time - last_speed_test_time >= 300:
+            # Run speed test every hour (3600 seconds)
+            if current_time - last_speed_test_time >= 3600:
                 speed = run_speed_test()
                 if speed:
                     write_to_influxdb("speed_test", speed)
                     logging.info(f"Wrote speed test results to InfluxDB: {speed}")
                 last_speed_test_time = current_time
+
+            # Run buffer bloat test every hour (3600 seconds)
+            if current_time - last_buffer_bloat_test_time >= 3600:
+                buffer_bloat = measure_buffer_bloat()
+                if buffer_bloat:
+                    write_to_influxdb("buffer_bloat", buffer_bloat)
+                    logging.info(f"Wrote buffer bloat results to InfluxDB: {buffer_bloat}")
+                last_buffer_bloat_test_time = current_time
 
         except Exception as e:
             logging.error(f"Unexpected error in main loop: {str(e)}")
@@ -181,4 +284,5 @@ def main():
 
 if __name__ == "__main__":
     logging.info("Starting Enhanced Network Monitor")
+    setup_grafana_dashboard()
     main()
