@@ -1,11 +1,12 @@
 import subprocess
 import time
 from influxdb import InfluxDBClient
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from collections import deque
 import json
 import requests
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,6 +33,10 @@ speed_deque = deque(maxlen=MOVING_AVERAGE_WINDOW)
 GRAFANA_HOST = 'http://localhost:3000'
 DASHBOARD_UID = 'fe0atovlm7o5cd'
 GRAFANA_API_KEY = 'glsa_VMUyp1G9lnCSe3gy42Nk0tT0qbUd8N2T_980a759f'
+
+# Ollama configuration
+OLLAMA_URL = "http://100.100.58.42:9090/api/generate"
+OLLAMA_MODEL = "llama3.2"  # Adjust this to the model you want to use
 
 def calculate_moving_average(values):
     return sum(values) / len(values) if values else None
@@ -162,90 +167,186 @@ def write_to_influxdb(measurement, fields):
             "fields": fields
         }
     ]
-    client.write_points(json_body)
+    response = client.write_points(json_body)
+    logging.info(f"InfluxDB write response: {response}")
 
 def setup_grafana_dashboard():
-    logging.info("Setting up Grafana dashboard")
+    logging.info("Grafana dashboard setup is not needed as the configuration is saved elsewhere.")
+    pass
+
+def get_last_hour_averages():
+    """Query InfluxDB for the average values of all metrics over the last hour."""
+    query = """
+    SELECT MEAN("min") as min, MEAN("avg") as avg, MEAN("max") as max, MEAN("mdev") as mdev, MEAN("packet_loss") as packet_loss
+    FROM "latency"
+    WHERE time > now() - 1h
+    GROUP BY time(1h) fill(none)
+    """
+    latency_result = client.query(query)
     
-    # Create a new dashboard
-    dashboard = {
-        "dashboard": {
-            "id": None,
-            "uid": None,
-            "title": "Network Monitor Dashboard",
-            "tags": ["network", "monitoring"],
-            "timezone": "browser",
-            "schemaVersion": 16,
-            "version": 0,
-            "panels": []
-        },
-        "overwrite": True
-    }
+    query = """
+    SELECT MEAN("download") as download, MEAN("upload") as upload, MEAN("ping") as ping, MEAN("jitter") as jitter
+    FROM "speed_test"
+    WHERE time > now() - 1h
+    GROUP BY time(1h) fill(none)
+    """
+    speed_result = client.query(query)
     
-    # Add Speedtest Latency Panel
-    dashboard["dashboard"]["panels"].append({
-        "title": "Speedtest Latency",
-        "type": "graph",
-        "datasource": "InfluxDB",
-        "targets": [
-            {"measurement": "speed_test", "select": [[{"params": ["ping"], "type": "field"}]]},
-            {"measurement": "speed_test", "select": [[{"params": ["jitter"], "type": "field"}]]},
-            {"measurement": "speed_test", "select": [[{"params": ["latency_idle"], "type": "field"}]]},
-            {"measurement": "speed_test", "select": [[{"params": ["latency_download"], "type": "field"}]]},
-            {"measurement": "speed_test", "select": [[{"params": ["latency_upload"], "type": "field"}]]},
-            {"measurement": "speed_test", "select": [[{"params": ["latency_idle_high"], "type": "field"}]]},
-            {"measurement": "speed_test", "select": [[{"params": ["latency_download_high"], "type": "field"}]]},
-            {"measurement": "speed_test", "select": [[{"params": ["latency_upload_high"], "type": "field"}]]}
-        ],
-        "yaxes": [{"format": "ms"}],
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
-    })
+    query = """
+    SELECT MEAN("min") as min, MEAN("avg") as avg, MEAN("max") as max, MEAN("mdev") as mdev
+    FROM "buffer_bloat"
+    WHERE time > now() - 1h
+    GROUP BY time(1h) fill(none)
+    """
+    buffer_bloat_result = client.query(query)
     
-    # Add Speedtest Throughput Panel
-    dashboard["dashboard"]["panels"].append({
-        "title": "Speedtest Download/Upload",
-        "type": "graph",
-        "datasource": "InfluxDB",
-        "targets": [
-            {"measurement": "speed_test", "select": [[{"params": ["download"], "type": "field"}]]},
-            {"measurement": "speed_test", "select": [[{"params": ["upload"], "type": "field"}]]}
-        ],
-        "yaxes": [{"format": "Mbps"}],
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
-    })
+    # Combine results
+    averages = {}
+    for measurement, points in latency_result.items():
+        averages['latency'] = next(points)
+    for measurement, points in speed_result.items():
+        averages['speed_test'] = next(points)
+    for measurement, points in buffer_bloat_result.items():
+        averages['buffer_bloat'] = next(points)
     
-    # Add Buffer Bloat Panel
-    dashboard["dashboard"]["panels"].append({
-        "title": "Buffer Bloat",
-        "type": "graph",
-        "datasource": "InfluxDB",
-        "targets": [
-            {"measurement": "buffer_bloat", "select": [[{"params": ["min"], "type": "field"}]]},
-            {"measurement": "buffer_bloat", "select": [[{"params": ["avg"], "type": "field"}]]},
-            {"measurement": "buffer_bloat", "select": [[{"params": ["max"], "type": "field"}]]},
-            {"measurement": "buffer_bloat", "select": [[{"params": ["mdev"], "type": "field"}]]}
-        ],
-        "yaxes": [{"format": "ms"}],
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
-    })
+    return averages
+
+def clean_report_text(text):
+    """Clean up the report text by removing excessive newlines and formatting."""
+    # Remove multiple consecutive newlines
+    cleaned = re.sub(r'\n{2,}', '\n', text)
+    # Remove leading/trailing whitespace
+    cleaned = cleaned.strip()
+    # Ensure single newline at the end
+    cleaned = cleaned.rstrip('\n') + '\n'
+    return cleaned
+
+def generate_network_report(averages):
+    """Generate a network report using Ollama."""
+    prompt = f"""
+    Generate a short, concise network report based on the following average metrics from the last hour:
+
+    Latency:
+    - Min: {averages['latency']['min']:.2f} ms
+    - Avg: {averages['latency']['avg']:.2f} ms
+    - Max: {averages['latency']['max']:.2f} ms
+    - Mdev: {averages['latency']['mdev']:.2f} ms
+    - Packet Loss: {averages['latency']['packet_loss']:.2f}%
+
+    Speed Test:
+    - Download: {averages['speed_test']['download']:.2f} Mbps
+    - Upload: {averages['speed_test']['upload']:.2f} Mbps
+    - Ping: {averages['speed_test']['ping']:.2f} ms
+    - Jitter: {averages['speed_test']['jitter']:.2f} ms
+
+    Buffer Bloat:
+    - Min: {averages['buffer_bloat']['min']:.2f} ms
+    - Avg: {averages['buffer_bloat']['avg']:.2f} ms
+    - Max: {averages['buffer_bloat']['max']:.2f} ms
+    - Mdev: {averages['buffer_bloat']['mdev']:.2f} ms
+
+    Network Standards:
+    - Packet Loss: 0-10% (max)
+    - Upload Speed: ~40 Mbps
+    - Download Speed: ~930 Mbps
+    - Buffer Bloat: ~13 ms
+    - Jitter: ≤2 ms
+    - Latency: 12-16 ms
+
+    These standards have a normal deviation of about 5%.
+
+    Provide a brief summary (2-3 sentences) focusing on significant deviations from the standards or notable performance. Highlight any metrics that are outside the expected range, considering the 5% deviation rule. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgement, even when comparing to network standards, based off of general understanding of networking.
+    """
+
+    try:
+        response = requests.post(OLLAMA_URL, json={
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.2
+            }
+        })
+        response.raise_for_status()
+        
+        response_data = response.json()
+        report = response_data.get('response', '').strip()
+        report = clean_report_text(report)  # Clean up the report text
+        
+        return report
+    except requests.RequestException as e:
+        logging.error(f"Error generating network report: {str(e)}")
+        return "Unable to generate network report due to an error."
+    except json.JSONDecodeError as e:
+        logging.error(f"Error parsing Ollama response: {str(e)}")
+        return "Unable to parse the network report response."
+
+def write_report_to_influxdb(report):
+    """Write the generated report to InfluxDB, overwriting the previous report."""
+    json_body = [
+        {
+            "measurement": "network_report",
+            "tags": {
+                "host": "raspberry_pi",
+                "report_type": "latest"
+            },
+            "time": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+            "fields": {
+                "content": report  # Change 'report' to 'content'
+            }
+        }
+    ]
     
-    # Save the dashboard configuration to a file
-    with open('/home/pi/peeng/network_dashboard.json', 'w') as f:
-        json.dump(dashboard, f)
+    # Delete the previous report before writing the new one
+    client.query('DELETE FROM "network_report" WHERE "report_type" = \'latest\'')
     
-    logging.info("Dashboard configuration saved to /home/pi/peeng/network_dashboard.json")
-    logging.info("You can now import this dashboard in Grafana manually.")
+    # Write the new report
+    client.write_points(json_body)
+
+def setup_data_retention_policy():
+    client = InfluxDBClient(host='localhost', port=8086)
+    
+    # Create the database if it doesn't exist
+    client.create_database(INFLUXDB_DATABASE)
+    
+    # Switch to the database
+    client.switch_database(INFLUXDB_DATABASE)
+    
+    # Create the retention policy
+    client.create_retention_policy(
+        name='network_metrics_retention',
+        duration='30d',
+        replication='1',
+        database=INFLUXDB_DATABASE,
+        default=True
+    )
+    
+    logging.info("Data retention policy set up successfully")
+
+def purge_old_data():
+    """Purge data older than 30 days from all measurements."""
+    thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    measurements = ['latency', 'speed_test', 'buffer_bloat', 'network_report']
+    
+    for measurement in measurements:
+        query = f'DELETE FROM "{measurement}" WHERE time < \'{thirty_days_ago}\''
+        client.query(query)
+    
+    logging.info("Purged data older than 30 days from all measurements")
 
 def main():
-    setup_grafana_dashboard()
+    setup_data_retention_policy()
     
     last_speed_test_time = 0
     last_buffer_bloat_test_time = 0
+    last_report_time = 0
+    last_purge_time = 0
+    
     while True:
         try:
             current_time = int(time.time())
             
-            # Measure and write latency for both targets
+            # Measure and write latency for both targets (now runs every iteration)
             latency_results = [measure_latency(target) for target in PING_TARGETS]
             latency_results = [r for r in latency_results if r is not None]
             
@@ -277,12 +378,25 @@ def main():
                     logging.info(f"Wrote buffer bloat results to InfluxDB: {buffer_bloat}")
                 last_buffer_bloat_test_time = current_time
 
+            # Generate and write network report every minute
+            if current_time - last_report_time >= 60:
+                averages = get_last_hour_averages()
+                report = generate_network_report(averages)
+                write_report_to_influxdb(report)
+                logging.info(f"Generated and wrote network report to InfluxDB:\n{report}")  # Log the entire cleaned report
+                last_report_time = current_time
+
+            # Purge old data daily
+            if current_time - last_purge_time >= 86400:  # 86400 seconds = 1 day
+                purge_old_data()
+                last_purge_time = current_time
+
         except Exception as e:
             logging.error(f"Unexpected error in main loop: {str(e)}")
 
-        time.sleep(1)  # Wait for 1 second before the next measurement
+        time.sleep(60)  # Wait for 60 seconds before the next measurement
 
 if __name__ == "__main__":
-    logging.info("Starting Enhanced Network Monitor")
-    setup_grafana_dashboard()
+    logging.info("Starting Enhanced Network Monitor with LLM-generated Reports and Data Retention")
+    client = InfluxDBClient(host='localhost', port=8086, database=INFLUXDB_DATABASE)
     main()
