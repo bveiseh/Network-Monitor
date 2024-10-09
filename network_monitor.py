@@ -197,7 +197,18 @@ def generate_network_report(averages):
     previous_reports_text = "\n\n".join([f"Report from {report['time']}:\n{report['content']}" for report in previous_reports])
 
     prompt = f"""
-    Generate a short, concise network report based on the following average metrics from the last two hours. Your network report should be 2 sentences maximum focusing on significant deviations from the standards or notable performance of this network. You are an AI network monitoring system. Highlight any metrics that are outside the expected range leaving a larger margin for fluctuations, looking at trends over time in the data. Consider the previous reports when writing your new reports as another way to keep track of trends, though minor variations are not notable or required for this report. If all metrics are within expected ranges, provide a short statement confirming good network health. Be forgiving and use best judgment, even when comparing to network standards, based on general understanding of networking. Be concise and to the point, but also be slightly humorous. You are monitoring the network of Brandon's home, and you work for Brandon. Use the speedtest latency metrics as an indicator of buffer bloat, comparing idle latency to download and upload latencies. Do not read out the statistics and numbers in this report, this is intended to be a narrative summary of the network health. Also, do not suggest improvements, keep your analysis extremely brief, this analysis is just meant to be a quick summary of the network health.:
+    Generate a short, concise network report based on the following average metrics from the last two hours. Your response should be EXACTLY 2 sentences maximum, focusing only on significant deviations from the standards or notable performance of this network. Do not provide a separate summary.
+
+    Rules:
+    1. Highlight only metrics that are significantly outside the expected range.
+    2. If all metrics are within expected ranges, provide a short statement confirming good network health.
+    3. Be slightly humorous but professional.
+    4. Do not read out statistics or numbers.
+    5. Do not suggest improvements.
+    6. Focus on trends over time, considering previous reports.
+    7. Use speedtest latency metrics as an indicator of buffer bloat.
+
+    Remember, you are an AI monitoring Brandon's home network. Keep your analysis extremely brief - this is just a quick summary of network health.
 
     Latency:
     - Min: {averages['latency']['min']:.2f} ms
@@ -222,7 +233,7 @@ def generate_network_report(averages):
     - Download: 930Mbps
     - Upload: 40Mbps
     - Ping: 20ms
-    These are maximum speeds, actual speeds may be in the range of 75% of those speeds at any given time.
+    These are maximum speeds, actual speeds may be in the range of 75% of those speeds at any given time. A moderate amount of buffer bloat is expected, but not extreme values, do not highlight buffer bloat unless it is extreme.
     
     Previous reports:
     {previous_reports_text}
