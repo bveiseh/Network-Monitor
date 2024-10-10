@@ -193,38 +193,64 @@ def get_last_hour_data():
         'speed_samples': speed_data[:3]  # Last 3 samples (assuming speed tests are less frequent)
     }
 
-def generate_network_report(data):
-    """Generate a network report using Ollama."""
+def get_recent_data(minutes=15):
+    """Query InfluxDB for the most recent data."""
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(minutes=minutes)
+    
+    query_latency = f"""
+    SELECT "min", "avg", "max", "mdev", "packet_loss"
+    FROM "latency"
+    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
+    """
+    
+    query_speed = f"""
+    SELECT "download", "upload", "ping"
+    FROM "speed_test"
+    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
+    """
+    
+    latency_result = client.query(query_latency)
+    speed_result = client.query(query_speed)
+    
+    return {
+        'latency': list(latency_result.get_points()),
+        'speed': list(speed_result.get_points())
+    }
+
+def generate_network_report(hourly_data, recent_data):
+    """Generate a concise, narrative-driven network report using Ollama."""
     prompt = f"""
-    Generate a brief network health report based on the following data from the last hour:
+    Generate a brief, narrative-driven network health report based on the following data:
 
-    Latency Averages:
-    - Min: {data['latency_avg']['min']:.2f} ms
-    - Avg: {data['latency_avg']['avg']:.2f} ms
-    - Max: {data['latency_avg']['max']:.2f} ms
-    - Mdev: {data['latency_avg']['mdev']:.2f} ms
-    - Packet Loss: {data['latency_avg']['packet_loss']:.2f}%
+    Last Hour Averages:
+    Latency:
+    - Min: {hourly_data['latency_avg']['min']:.2f} ms
+    - Avg: {hourly_data['latency_avg']['avg']:.2f} ms
+    - Max: {hourly_data['latency_avg']['max']:.2f} ms
+    - Mdev: {hourly_data['latency_avg']['mdev']:.2f} ms
+    - Packet Loss: {hourly_data['latency_avg']['packet_loss']:.2f}%
 
-    Speed Test Averages:
-    - Download: {data['speed_avg']['download']:.2f} Mbps
-    - Upload: {data['speed_avg']['upload']:.2f} Mbps
-    - Ping: {data['speed_avg']['ping']:.2f} ms
+    Speed:
+    - Download: {hourly_data['speed_avg']['download']:.2f} Mbps
+    - Upload: {hourly_data['speed_avg']['upload']:.2f} Mbps
+    - Ping: {hourly_data['speed_avg']['ping']:.2f} ms
 
-    Latency Samples (last 10):
-    {json.dumps(data['latency_samples'], indent=2)}
+    Last 15 Minutes Data:
+    Latency:
+    {json.dumps(recent_data['latency'], indent=2)}
 
-    Speed Test Samples (last 3):
-    {json.dumps(data['speed_samples'], indent=2)}
+    Speed:
+    {json.dumps(recent_data['speed'], indent=2)}
 
     Rules:
-    1. Provide a concise summary in exactly two sentences.
-    2. Focus on significant deviations from expected performance (Download: 930Mbps, Upload: 40Mbps, Ping: 20ms).
-    3. Highlight any concerning trends in latency or packet loss.
-    4. If all metrics are within normal ranges, confirm good network health.
-    5. Be slightly humorous but professional.
-    6. Do not suggest improvements or mention buffer bloat.
+    1. Provide a concise summary in exactly two to three sentences.
+    2. Focus on the overall health and any significant deviations or trends, especially in the last 15 minutes.
+    3. Use a conversational, slightly humorous tone while remaining professional.
+    4. Do not include specific numbers or technical jargon.
+    5. Do not suggest improvements or mention buffer bloat.
 
-    Your response should be brief and informative, suitable for a quick network health check.
+    Your response should be brief and informative, suitable for a quick network health check by a non-technical user.
     """
 
     try:
@@ -233,20 +259,26 @@ def generate_network_report(data):
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.2,
+                "temperature": 0.3,
                 "max_tokens": 100
             }
         }, timeout=10)
         response.raise_for_status()
         
         report = response.json().get('response', '').strip()
-        return report
+        
+        # Post-process the report
+        sentences = report.split('.')
+        if len(sentences) > 3:
+            report = '. '.join(sentences[:3]) + '.'
+        
+        return report.strip()
     except requests.RequestException as e:
         logging.error(f"Error generating network report: {str(e)}")
-        return "Unable to generate network report due to an error."
+        return "Network report unavailable due to a temporary issue."
     except json.JSONDecodeError as e:
         logging.error(f"Error parsing Ollama response: {str(e)}")
-        return "Unable to parse the network report response."
+        return "Unable to generate network report at this time."
 
 def write_report_to_influxdb(report):
     """Write the generated report to InfluxDB."""
@@ -344,8 +376,9 @@ def main():
             # Generate and write network report every 15 minutes
             if current_time - last_report_time >= 900:  # 900 seconds = 15 minutes
                 logging.info("Generating new network report")
-                data = get_last_hour_data()
-                report = generate_network_report(data)
+                hourly_data = get_last_hour_data()
+                recent_data = get_recent_data(minutes=15)
+                report = generate_network_report(hourly_data, recent_data)
                 write_report_to_influxdb(report)
                 last_report_time = current_time
             
