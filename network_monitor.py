@@ -165,11 +165,31 @@ def get_last_hour_data():
     WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
     """
     
+    query_latency_8888 = f"""
+    SELECT "min", "avg", "max", "mdev", "packet_loss"
+    FROM "latency_8.8.8.8"
+    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
+    ORDER BY time DESC
+    LIMIT 250
+    """
+    
+    query_latency_1111 = f"""
+    SELECT "min", "avg", "max", "mdev", "packet_loss"
+    FROM "latency_1.1.1.1"
+    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
+    ORDER BY time DESC
+    LIMIT 250
+    """
+    
     latency_result = client.query(query_latency)
     speed_result = client.query(query_speed)
+    latency_8888_result = client.query(query_latency_8888)
+    latency_1111_result = client.query(query_latency_1111)
     
     latency_data = list(latency_result.get_points())
     speed_data = list(speed_result.get_points())
+    latency_8888_data = list(latency_8888_result.get_points())
+    latency_1111_data = list(latency_1111_result.get_points())
     
     # Calculate averages
     latency_avg = {
@@ -178,6 +198,14 @@ def get_last_hour_data():
         'max': sum(point['max'] for point in latency_data) / len(latency_data) if latency_data else None,
         'mdev': sum(point['mdev'] for point in latency_data) / len(latency_data) if latency_data else None,
         'packet_loss': sum(point['packet_loss'] for point in latency_data) / len(latency_data) if latency_data else None
+    }
+    
+    latency_avg_8888 = {
+        'avg': sum(point['avg'] for point in latency_8888_data) / len(latency_8888_data) if latency_8888_data else None
+    }
+    
+    latency_avg_1111 = {
+        'avg': sum(point['avg'] for point in latency_1111_data) / len(latency_1111_data) if latency_1111_data else None
     }
     
     speed_avg = {
@@ -190,7 +218,11 @@ def get_last_hour_data():
         'latency_avg': latency_avg,
         'speed_avg': speed_avg,
         'latency_samples': latency_data[:10],  # Last 10 samples
-        'speed_samples': speed_data[:3]  # Last 3 samples (assuming speed tests are less frequent)
+        'speed_samples': speed_data[:3],  # Last 3 samples (assuming speed tests are less frequent)
+        'latency_samples_8.8.8.8': latency_8888_data,  # Now includes up to 250 samples
+        'latency_samples_1.1.1.1': latency_1111_data,  # Now includes up to 250 samples
+        'latency_avg_8.8.8.8': latency_avg_8888,
+        'latency_avg_1.1.1.1': latency_avg_1111
     }
 
 def get_recent_data(minutes=15):
@@ -243,12 +275,22 @@ def generate_network_report(hourly_data, recent_data):
     Speed:
     {json.dumps(recent_data['speed'], indent=2)}
 
+    Latency Comparison:
+    Averages:
+    - 8.8.8.8: {hourly_data['latency_avg_8.8.8.8']['avg']:.2f} ms
+    - 1.1.1.1: {hourly_data['latency_avg_1.1.1.1']['avg']:.2f} ms
+
+    Raw Data (last 250 samples):
+    8.8.8.8: {json.dumps(hourly_data['latency_samples_8.8.8.8'], indent=2)}
+    1.1.1.1: {json.dumps(hourly_data['latency_samples_1.1.1.1'], indent=2)}
+
     Rules:
     1. Provide a concise summary in exactly two to three sentences.
-    2. Focus on the overall health and any significant deviations or trends, especially in the last 15 minutes.
-    3. Use a conversational, slightly humorous tone while remaining professional.
-    4. Do not include specific numbers or technical jargon.
+    2. Focus on the overall health and any significant deviations or trends based on the raw data and the averages.
+    3. Use a conversational, but professional, clinical and very serious tone.
+    4. Do not include technical jargon.
     5. Do not suggest improvements or mention buffer bloat.
+    6. Look for any significant latency spike, speed drops, or packet loss. A few seconds of high latency or a sudden drop in speed is not relevant. look for sustained high latency or low speed.
 
     Your response should be brief and informative, suitable for a quick network health check by a non-technical user.
     """
@@ -259,7 +301,7 @@ def generate_network_report(hourly_data, recent_data):
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.3,
+                "temperature": 0.2,
                 "max_tokens": 100
             }
         }, timeout=10)
