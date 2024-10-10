@@ -288,7 +288,7 @@ def generate_network_report(hourly_data, recent_data):
     1. Provide a concise summary in exactly two to three sentences.
     2. Focus on the overall health and any significant deviations or trends based on the raw data and the averages.
     3. Use a conversational, but professional, clinical and very serious tone.
-    4. Do not include technical jargon.
+    4. Do not include technical jargon or specific numbers.
     5. Do not suggest improvements or mention buffer bloat.
     6. Look for any significant latency spike, speed drops, or packet loss. A few seconds of high latency or a sudden drop in speed is not relevant. look for sustained high latency or low speed.
 
@@ -302,7 +302,7 @@ def generate_network_report(hourly_data, recent_data):
             "stream": False,
             "options": {
                 "temperature": 0.2,
-                "max_tokens": 100
+                "max_tokens": 150
             }
         }, timeout=10)
         response.raise_for_status()
