@@ -1,5 +1,8 @@
 sudo systemctl restart network_monitor.service
 
+   sudo journalctl -fu network_monitor.service
+
+      sudo systemctl status network_monitor.service
 
 
 # test 
