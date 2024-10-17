@@ -8,6 +8,7 @@ import json
 import requests
 import re
 import threading
+import math
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,7 +19,7 @@ INFLUXDB_PORT = 8086
 INFLUXDB_DATABASE = 'network_metrics'
 
 # Ping targets (configurable)
-PING_TARGETS = ['8.8.8.8', '1.1.1.1']
+PING_TARGETS = ['8.8.8.8', '1.1.1.1', '10.1.1.1']
 
 # Connect to InfluxDB
 client = InfluxDBClient(host=INFLUXDB_HOST, port=INFLUXDB_PORT)
@@ -64,11 +65,19 @@ def measure_latency(target):
                 packets_transmitted = int(stats[0].split()[0])
                 packets_received = int(stats[1].split()[0])
         
+        packet_loss = 100.0 - (packets_received / packets_transmitted * 100)
+        
         if not latencies:
             logging.warning(f"No latency data found for {target}")
-            return None
-        
-        packet_loss = 100.0 - (packets_received / packets_transmitted * 100)
+            return {
+                'target': target,
+                'min': float('inf'),
+                'avg': float('inf'),
+                'max': float('inf'),
+                'mdev': float('inf'),
+                'packet_loss': 100.0,
+                'status': 'disconnected'
+            }
         
         # Extract mdev (standard deviation) from the last line
         mdev = 0.0
@@ -78,30 +87,52 @@ def measure_latency(target):
             logging.warning(f"Could not extract mdev for {target}")
         
         result = {
+            'target': target,
             'min': min(latencies),
             'avg': sum(latencies) / len(latencies),
             'max': max(latencies),
             'mdev': mdev,
-            'packet_loss': packet_loss
+            'packet_loss': packet_loss,
+            'status': 'connected' if packet_loss < 100 else 'disconnected'
         }
         logging.info(f"Latency results for {target}: {result}")
         return result
     except subprocess.CalledProcessError as e:
         logging.error(f"Error measuring latency for {target}: {e.output}")
-        return None
+        return {
+            'target': target,
+            'min': float('inf'),
+            'avg': float('inf'),
+            'max': float('inf'),
+            'mdev': float('inf'),
+            'packet_loss': 100.0,
+            'status': 'disconnected'
+        }
     except Exception as e:
         logging.error(f"Unexpected error measuring latency for {target}: {str(e)}")
-        return None
+        return {
+            'target': target,
+            'min': float('inf'),
+            'avg': float('inf'),
+            'max': float('inf'),
+            'mdev': float('inf'),
+            'packet_loss': 100.0,
+            'status': 'disconnected'
+        }
 
 def average_latency_results(results):
     if not results:
         return None
+    non_gateway_results = [r for r in results if r.get('target') != '10.1.1.1' and r.get('status') == 'connected']
+    if not non_gateway_results:
+        return None
     return {
-        'min': sum(r['min'] for r in results) / len(results),
-        'avg': sum(r['avg'] for r in results) / len(results),
-        'max': sum(r['max'] for r in results) / len(results),
-        'mdev': sum(r['mdev'] for r in results) / len(results),
-        'packet_loss': sum(r['packet_loss'] for r in results) / len(results)
+        'min': sum(r['min'] for r in non_gateway_results) / len(non_gateway_results),
+        'avg': sum(r['avg'] for r in non_gateway_results) / len(non_gateway_results),
+        'max': sum(r['max'] for r in non_gateway_results) / len(non_gateway_results),
+        'mdev': sum(r['mdev'] for r in non_gateway_results) / len(non_gateway_results),
+        'packet_loss': sum(r['packet_loss'] for r in non_gateway_results) / len(non_gateway_results),
+        'status': 'connected'
     }
 
 def run_speed_test():
@@ -181,15 +212,25 @@ def get_last_hour_data():
     LIMIT 250
     """
     
+    query_latency_gateway = f"""
+    SELECT "min", "avg", "max", "mdev", "packet_loss"
+    FROM "latency_10.1.1.1"
+    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
+    ORDER BY time DESC
+    LIMIT 250
+    """
+    
     latency_result = client.query(query_latency)
     speed_result = client.query(query_speed)
     latency_8888_result = client.query(query_latency_8888)
     latency_1111_result = client.query(query_latency_1111)
+    latency_gateway_result = client.query(query_latency_gateway)
     
     latency_data = list(latency_result.get_points())
     speed_data = list(speed_result.get_points())
     latency_8888_data = list(latency_8888_result.get_points())
     latency_1111_data = list(latency_1111_result.get_points())
+    latency_gateway_data = list(latency_gateway_result.get_points())
     
     # Calculate averages
     latency_avg = {
@@ -208,6 +249,10 @@ def get_last_hour_data():
         'avg': sum(point['avg'] for point in latency_1111_data) / len(latency_1111_data) if latency_1111_data else None
     }
     
+    latency_avg_gateway = {
+        'avg': sum(point['avg'] for point in latency_gateway_data) / len(latency_gateway_data) if latency_gateway_data else None
+    }
+    
     speed_avg = {
         'download': sum(point['download'] for point in speed_data) / len(speed_data) if speed_data else None,
         'upload': sum(point['upload'] for point in speed_data) / len(speed_data) if speed_data else None,
@@ -221,8 +266,10 @@ def get_last_hour_data():
         'speed_samples': speed_data[:3],  # Last 3 samples (assuming speed tests are less frequent)
         'latency_samples_8.8.8.8': latency_8888_data,  # Now includes up to 250 samples
         'latency_samples_1.1.1.1': latency_1111_data,  # Now includes up to 250 samples
+        'latency_samples_10.1.1.1': latency_gateway_data,
         'latency_avg_8.8.8.8': latency_avg_8888,
-        'latency_avg_1.1.1.1': latency_avg_1111
+        'latency_avg_1.1.1.1': latency_avg_1111,
+        'latency_avg_10.1.1.1': latency_avg_gateway
     }
 
 def get_recent_data(minutes=15):
@@ -279,10 +326,12 @@ def generate_network_report(hourly_data, recent_data):
     Averages:
     - 8.8.8.8: {hourly_data['latency_avg_8.8.8.8']['avg']:.2f} ms
     - 1.1.1.1: {hourly_data['latency_avg_1.1.1.1']['avg']:.2f} ms
+    - Gateway (10.1.1.1): {hourly_data['latency_avg_10.1.1.1']['avg']:.2f} ms
 
     Raw Data (last 250 samples):
     8.8.8.8: {json.dumps(hourly_data['latency_samples_8.8.8.8'], indent=2)}
     1.1.1.1: {json.dumps(hourly_data['latency_samples_1.1.1.1'], indent=2)}
+    Gateway (10.1.1.1): {json.dumps(hourly_data['latency_samples_10.1.1.1'], indent=2)}
 
     Rules:
     1. Provide a concise summary in exactly two to three sentences.
@@ -391,19 +440,21 @@ def main():
             
             # Measure and write latency for both targets (runs every second)
             latency_results = [measure_latency(target) for target in PING_TARGETS]
-            latency_results = [r for r in latency_results if r is not None]
             
             if latency_results:
                 avg_latency = average_latency_results(latency_results)
-                write_to_influxdb("latency", avg_latency)
-                logging.info(f"Wrote average latency to InfluxDB: {avg_latency}")
+                if avg_latency:
+                    write_to_influxdb("latency", avg_latency)
+                    logging.info(f"Wrote average latency (excluding gateway and disconnected targets) to InfluxDB: {avg_latency}")
                 
                 # Write individual target results
-                for target, result in zip(PING_TARGETS, latency_results):
+                for result in latency_results:
+                    target = result['target']
+                    del result['target']  # Remove target from the data to be written
                     write_to_influxdb(f"latency_{target}", result)
                     logging.info(f"Wrote latency for {target} to InfluxDB: {result}")
             else:
-                logging.warning("No valid latency results to write to InfluxDB")
+                logging.warning("No latency results to write to InfluxDB")
 
             # Run speed test every hour (3600 seconds)
             if current_time - last_speed_test_time >= 3600:
