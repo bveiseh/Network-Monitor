@@ -38,7 +38,7 @@ GRAFANA_API_KEY = 'glsa_VMUyp1G9lnCSe3gy42Nk0tT0qbUd8N2T_980a759f'
 
 # Ollama configuration
 OLLAMA_URL = "http://100.100.58.42:9090/api/generate"
-OLLAMA_MODEL = "llama3.1"
+OLLAMA_MODEL = "llama3.1:8b-instruct-q8_0"
 
 def calculate_moving_average(values):
     return sum(values) / len(values) if values else None
