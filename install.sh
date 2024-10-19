@@ -51,8 +51,8 @@ device_ip=$(hostname -I | awk '{print $1}')
 # Update InfluxDB configuration to bind to the device's IP
 sudo sed -i "s/^# bind-address = \"127.0.0.1:8086\"/bind-address = \"$device_ip:8086\"/" /etc/influxdb/influxdb.conf
 
-# Update Grafana configuration to bind to the device's IP
-sudo sed -i "s/^;http_addr =/http_addr = $device_ip/" /etc/grafana/grafana.ini
+# Update Grafana configuration to bind to all network interfaces
+sudo sed -i "s/^;http_addr =/http_addr = 0.0.0.0/" /etc/grafana/grafana.ini
 
 # Start and enable InfluxDB and Grafana services
 sudo systemctl restart influxdb
