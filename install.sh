@@ -39,6 +39,12 @@ chmod +x network_monitor.py
 # Move the script to a suitable location
 sudo mv network_monitor.py /usr/local/bin/network-monitor
 
+# Ensure the shebang line is present
+sudo sed -i '1i#!/usr/bin/env python3' /usr/local/bin/network-monitor
+
+# Make sure the script is executable
+sudo chmod +x /usr/local/bin/network-monitor
+
 # Start and enable InfluxDB and Grafana services
 sudo systemctl start influxdb
 sudo systemctl enable influxdb
