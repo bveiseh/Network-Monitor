@@ -129,12 +129,12 @@ def run_speed_test():
         logging.error(f"Unexpected error running speed test: {str(e)}")
         return None
 
-def write_to_influxdb(measurement, fields):
+def write_to_influxdb(client, measurement, fields):
     json_body = [
         {
             "measurement": measurement,
             "tags": {
-                "host": "raspberry_pi"
+                "host": "local_machine"
             },
             "time": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
             "fields": fields
@@ -234,64 +234,8 @@ def generate_network_report(extended_data, llm_config):
         logging.error(f"Error generating network report: {str(e)}")
         return "Network report unavailable due to a temporary issue."
 
-def configure():
-    config = {}
-    print("Network Monitor Configuration")
-    
-    # LLM Configuration
-    print("\nLLM Configuration")
-    print("1. Ollama")
-    print("2. OpenAI")
-    print("3. Anthropic")
-    print("4. Custom (OpenAI API format)")
-    
-    choice = input("Select LLM provider (1-4): ")
-    
-    if choice == '1':
-        url = input("Enter Ollama URL (default: http://localhost:11434): ") or "http://localhost:11434"
-        model = input("Enter Ollama model name: ")
-        config['llm'] = {'provider': 'ollama', 'url': url, 'model': model}
-    elif choice == '2':
-        api_key = input("Enter OpenAI API key: ")
-        model = input("Enter OpenAI model name (e.g., gpt-4o-mini): ")
-        config['llm'] = {'provider': 'openai', 'api_key': api_key, 'model': model}
-    elif choice == '3':
-        api_key = input("Enter Anthropic API key: ")
-        model = input("Enter Anthropic model name (e.g., claude-3-sonnet): ")
-        config['llm'] = {'provider': 'anthropic', 'api_key': api_key, 'model': model}
-    elif choice == '4':
-        url = input("Enter custom LLM API URL: ")
-        api_key = input("Enter API key (if required): ")
-        model = input("Enter model name: ")
-        config['llm'] = {'provider': 'custom', 'url': url, 'api_key': api_key, 'model': model}
-    else:
-        print("Invalid choice. Using default Ollama configuration.")
-        config['llm'] = {'provider': 'ollama', 'url': "http://localhost:11434", 'model': "llama2"}
-
-    # Configure ping targets
-    print("\nPing Target Configuration")
-    targets = []
-    targets.append(input("Enter first ping target (default: 1.1.1.1): ") or "1.1.1.1")
-    targets.append(input("Enter second ping target (default: 8.8.8.8): ") or "8.8.8.8")
-    gateway = input("Enter your gateway IP address (default: 10.1.1.1): ") or "10.1.1.1"
-    targets.append(gateway)
-    config['ping_targets'] = targets
-
-    # Grafana API Key Configuration
-    print("\nGrafana API Key Configuration")
-    grafana_api_key = input("Enter your Grafana API key: ")
-    config['grafana_api_key'] = grafana_api_key
-
-    # Save configuration to file
-    config_path = os.path.expanduser('~/.network_monitor_config.json')
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=2)
-
-    print(f"Configuration saved to {config_path}")
-    return config
-
 def load_configuration():
-    config_path = os.path.expanduser('~/.network_monitor_config.json')
+    config_path = '/etc/network_monitor_config.json'
     if os.path.exists(config_path):
         with open(config_path, 'r') as f:
             return json.load(f)
@@ -301,18 +245,13 @@ def main():
     global PING_TARGETS, GRAFANA_API_KEY, LLM_CONFIG
 
     parser = argparse.ArgumentParser(description="Network Monitor")
-    parser.add_argument("--configure", action="store_true", help="Run configuration wizard")
     parser.add_argument("--start", action="store_true", help="Start monitoring")
     args = parser.parse_args()
-
-    if args.configure:
-        configure()
-        sys.exit(0)
 
     if args.start:
         config = load_configuration()
         if not config:
-            print("No configuration found. Please run with --configure first.")
+            print("No configuration found. Please run the installation script.")
             sys.exit(1)
 
         PING_TARGETS = config['ping_targets']
@@ -328,7 +267,7 @@ def main():
         while True:
             for target in PING_TARGETS:
                 latency = measure_latency(target)
-                write_to_influxdb(f"latency_{target}", latency)
+                write_to_influxdb(client, f"latency_{target}", latency)
 
             time.sleep(60)  # Wait for 1 minute before next measurement
 
