@@ -3,59 +3,28 @@ import time
 from influxdb import InfluxDBClient
 from datetime import datetime, timedelta
 import logging
-from collections import deque
 import json
 import requests
-import re
-import threading
-import math
-from statistics import mean, stdev
-import openai  # Add this import
-import os
 import argparse
+import os
+import sys
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # InfluxDB configuration
 INFLUXDB_HOST = 'localhost'
-INFLUXDB_PORT = 9834
+INFLUXDB_PORT = 8086
 INFLUXDB_DATABASE = 'network_metrics'
-
-# Ping targets (will be set in configure_network_monitor)
-PING_TARGETS = []
-
-# Connect to InfluxDB
-client = InfluxDBClient(host=INFLUXDB_HOST, port=INFLUXDB_PORT)
-client.create_database(INFLUXDB_DATABASE)
-client.switch_database(INFLUXDB_DATABASE)
-
-MOVING_AVERAGE_WINDOW = 5
-
-latency_deque = deque(maxlen=MOVING_AVERAGE_WINDOW)
-speed_deque = deque(maxlen=MOVING_AVERAGE_WINDOW)
 
 # Grafana configuration
 GRAFANA_HOST = 'http://localhost:3000'
 DASHBOARD_UID = 'fe0atovlm7o5cd'
-GRAFANA_API_KEY = 'YOUR_GRAFANA_API_KEY_HERE'
 
-# Ollama configuration
-OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "llama3.1:8b-instruct-fp16"
-
-# OpenAI configuration
-OPENAI_API_KEY = ""
-
-# Anthropic configuration
-ANTHROPIC_API_KEY = ""
-
-# Custom LLM configuration
-CUSTOM_LLM_URL = ""
-CUSTOM_LLM_API_KEY = ""
-
-def calculate_moving_average(values):
-    return sum(values) / len(values) if values else None
+# Global variables to be set by configuration
+PING_TARGETS = []
+GRAFANA_API_KEY = ''
+LLM_CONFIG = {}
 
 def measure_latency(target):
     try:
@@ -134,21 +103,6 @@ def measure_latency(target):
             'status': 'disconnected'
         }
 
-def average_latency_results(results):
-    if not results:
-        return None
-    non_gateway_results = [r for r in results if r.get('target') != '10.1.1.1' and r.get('status') == 'connected']
-    if not non_gateway_results:
-        return None
-    return {
-        'min': sum(r['min'] for r in non_gateway_results) / len(non_gateway_results),
-        'avg': sum(r['avg'] for r in non_gateway_results) / len(non_gateway_results),
-        'max': sum(r['max'] for r in non_gateway_results) / len(non_gateway_results),
-        'mdev': sum(r['mdev'] for r in non_gateway_results) / len(non_gateway_results),
-        'packet_loss': sum(r['packet_loss'] for r in non_gateway_results) / len(non_gateway_results),
-        'status': 'connected'
-    }
-
 def run_speed_test():
     try:
         output = subprocess.check_output(['speedtest', '-f', 'json'], universal_newlines=True)
@@ -188,172 +142,6 @@ def write_to_influxdb(measurement, fields):
     ]
     response = client.write_points(json_body)
     logging.info(f"InfluxDB write response: {response}")
-
-def setup_grafana_dashboard():
-    logging.info("Grafana dashboard setup is not needed as the configuration is saved elsewhere.")
-    pass
-
-def get_last_hour_data():
-    """Query InfluxDB for the last hour of data for all metrics."""
-    end_time = datetime.utcnow()
-    start_time = end_time - timedelta(hours=1)
-    
-    query_latency = f"""
-    SELECT "min", "avg", "max", "mdev", "packet_loss"
-    FROM "latency"
-    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
-    """
-    
-    query_speed = f"""
-    SELECT "download", "upload", "ping"
-    FROM "speed_test"
-    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
-    """
-    
-    query_latency_8888 = f"""
-    SELECT "min", "avg", "max", "mdev", "packet_loss"
-    FROM "latency_8.8.8.8"
-    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
-    ORDER BY time DESC
-    LIMIT 250
-    """
-    
-    query_latency_1111 = f"""
-    SELECT "min", "avg", "max", "mdev", "packet_loss"
-    FROM "latency_1.1.1.1"
-    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
-    ORDER BY time DESC
-    LIMIT 250
-    """
-    
-    query_latency_gateway = f"""
-    SELECT "min", "avg", "max", "mdev", "packet_loss"
-    FROM "latency_10.1.1.1"
-    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
-    ORDER BY time DESC
-    LIMIT 250
-    """
-    
-    latency_result = client.query(query_latency)
-    speed_result = client.query(query_speed)
-    latency_8888_result = client.query(query_latency_8888)
-    latency_1111_result = client.query(query_latency_1111)
-    latency_gateway_result = client.query(query_latency_gateway)
-    
-    latency_data = list(latency_result.get_points())
-    speed_data = list(speed_result.get_points())
-    latency_8888_data = list(latency_8888_result.get_points())
-    latency_1111_data = list(latency_1111_result.get_points())
-    latency_gateway_data = list(latency_gateway_result.get_points())
-    
-    # Calculate averages
-    latency_avg = {
-        'min': sum(point['min'] for point in latency_data) / len(latency_data) if latency_data else None,
-        'avg': sum(point['avg'] for point in latency_data) / len(latency_data) if latency_data else None,
-        'max': sum(point['max'] for point in latency_data) / len(latency_data) if latency_data else None,
-        'mdev': sum(point['mdev'] for point in latency_data) / len(latency_data) if latency_data else None,
-        'packet_loss': sum(point['packet_loss'] for point in latency_data) / len(latency_data) if latency_data else None
-    }
-    
-    latency_avg_8888 = {
-        'avg': sum(point['avg'] for point in latency_8888_data) / len(latency_8888_data) if latency_8888_data else None
-    }
-    
-    latency_avg_1111 = {
-        'avg': sum(point['avg'] for point in latency_1111_data) / len(latency_1111_data) if latency_1111_data else None
-    }
-    
-    latency_avg_gateway = {
-        'avg': sum(point['avg'] for point in latency_gateway_data) / len(latency_gateway_data) if latency_gateway_data else None
-    }
-    
-    speed_avg = {
-        'download': sum(point['download'] for point in speed_data) / len(speed_data) if speed_data else None,
-        'upload': sum(point['upload'] for point in speed_data) / len(speed_data) if speed_data else None,
-        'ping': sum(point['ping'] for point in speed_data) / len(speed_data) if speed_data else None
-    }
-    
-    return {
-        'latency_avg': latency_avg,
-        'speed_avg': speed_avg,
-        'latency_samples': latency_data[:10],  # Last 10 samples
-        'speed_samples': speed_data[:3],  # Last 3 samples (assuming speed tests are less frequent)
-        'latency_samples_8.8.8.8': latency_8888_data,  # Now includes up to 250 samples
-        'latency_samples_1.1.1.1': latency_1111_data,  # Now includes up to 250 samples
-        'latency_samples_10.1.1.1': latency_gateway_data,
-        'latency_avg_8.8.8.8': latency_avg_8888,
-        'latency_avg_1.1.1.1': latency_avg_1111,
-        'latency_avg_10.1.1.1': latency_avg_gateway
-    }
-
-def get_recent_data(minutes=15):
-    """Query InfluxDB for the most recent data."""
-    end_time = datetime.utcnow()
-    start_time = end_time - timedelta(minutes=minutes)
-    
-    query_latency = f"""
-    SELECT "min", "avg", "max", "mdev", "packet_loss"
-    FROM "latency"
-    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
-    """
-    
-    query_speed = f"""
-    SELECT "download", "upload", "ping"
-    FROM "speed_test"
-    WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
-    """
-    
-    latency_result = client.query(query_latency)
-    speed_result = client.query(query_speed)
-    
-    return {
-        'latency': list(latency_result.get_points()),
-        'speed': list(speed_result.get_points())
-    }
-
-def get_extended_network_data():
-    end_time = datetime.utcnow()
-    start_time_24h = end_time - timedelta(hours=24)
-
-    def query_data(measurement, start_time):
-        query = f"""
-        SELECT *
-        FROM "{measurement}"
-        WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
-        """
-        return list(client.query(query).get_points())
-
-    latency_24h = query_data("latency", start_time_24h)
-    speed_24h = query_data("speed_test", start_time_24h)
-
-    # Calculate number of disconnects in last 24 hours
-    disconnects_24h = sum(1 for point in latency_24h if point.get('status') == 'disconnected')
-
-    # Identify sustained issues (e.g., latency > 100ms for > 5 minutes)
-    sustained_issues = []
-    issue_start = None
-    for point in latency_24h:
-        if point['avg'] > 100:
-            if issue_start is None:
-                issue_start = point['time']
-        elif issue_start is not None:
-            issue_end = point['time']
-            duration = (datetime.fromisoformat(issue_end.rstrip('Z')) - 
-                        datetime.fromisoformat(issue_start.rstrip('Z'))).total_seconds() / 60
-            if duration > 5:
-                sustained_issues.append({
-                    'start': issue_start,
-                    'end': issue_end,
-                    'duration_minutes': duration
-                })
-            issue_start = None
-
-    return {
-        'latency_24h': latency_24h,
-        'speed_24h': speed_24h,
-        'disconnects_24h': disconnects_24h,
-        'sustained_issues': sustained_issues
-    }
 
 def generate_network_report(extended_data, llm_config):
     prompt = f"""
@@ -446,63 +234,7 @@ def generate_network_report(extended_data, llm_config):
         logging.error(f"Error generating network report: {str(e)}")
         return "Network report unavailable due to a temporary issue."
 
-def write_report_to_influxdb(report):
-    """Write the generated report to InfluxDB."""
-    current_time = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-    
-    json_body = [
-        {
-            "measurement": "network_report",
-            "tags": {
-                "host": "raspberry_pi",
-                "report_type": "latest"
-            },
-            "time": current_time,
-            "fields": {
-                "content": report
-            }
-        }
-    ]
-    
-    success = client.write_points(json_body)
-    
-    if success:
-        logging.info(f"Successfully wrote new report to InfluxDB: {report}")
-    else:
-        logging.error(f"Failed to write new report to InfluxDB: {report}")
-
-def setup_data_retention_policy():
-    client = InfluxDBClient(host='localhost', port=8086)
-    
-    # Create the database if it doesn't exist
-    client.create_database(INFLUXDB_DATABASE)
-    
-    # Switch to the database
-    client.switch_database(INFLUXDB_DATABASE)
-    
-    # Create the retention policy
-    client.create_retention_policy(
-        name='network_metrics_retention',
-        duration='30d',
-        replication='1',
-        database=INFLUXDB_DATABASE,
-        default=True
-    )
-    
-    logging.info("Data retention policy set up successfully")
-
-def purge_old_data():
-    """Purge data older than 30 days from all measurements."""
-    thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    measurements = ['latency', 'speed_test', 'buffer_bloat', 'network_report']
-    
-    for measurement in measurements:
-        query = f'DELETE FROM "{measurement}" WHERE time < \'{thirty_days_ago}\''
-        client.query(query)
-    
-    logging.info("Purged data older than 30 days from all measurements")
-
-def configure_network_monitor():
+def configure():
     config = {}
     print("Network Monitor Configuration")
     
@@ -538,9 +270,6 @@ def configure_network_monitor():
 
     # Configure ping targets
     print("\nPing Target Configuration")
-    print("Recommended targets: 1.1.1.1, 8.8.8.8")
-    print("Current gateway target: 10.1.1.1")
-    
     targets = []
     targets.append(input("Enter first ping target (default: 1.1.1.1): ") or "1.1.1.1")
     targets.append(input("Enter second ping target (default: 8.8.8.8): ") or "8.8.8.8")
@@ -550,131 +279,61 @@ def configure_network_monitor():
 
     # Grafana API Key Configuration
     print("\nGrafana API Key Configuration")
-    print("Attempting to generate Grafana API key automatically...")
-    
-    grafana_url = "http://localhost:9834"  # Update this if your Grafana URL is different
-    grafana_user = "admin"
-    grafana_password = "admin"  # This should be changed after first login
-
-    try:
-        # Create Grafana API key
-        api_key_response = requests.post(
-            f"{grafana_url}/api/auth/keys",
-            json={"name": "NetworkMonitorKey", "role": "Admin"},
-            auth=(grafana_user, grafana_password)
-        )
-        api_key_response.raise_for_status()
-        grafana_api_key = api_key_response.json()["key"]
-        print("Grafana API key generated successfully.")
-    except requests.RequestException as e:
-        print(f"Failed to generate Grafana API key automatically: {e}")
-        grafana_api_key = input("Please enter your Grafana API key manually: ")
-
+    grafana_api_key = input("Enter your Grafana API key: ")
     config['grafana_api_key'] = grafana_api_key
 
     # Save configuration to file
-    with open('network_monitor_config.json', 'w') as f:
+    config_path = os.path.expanduser('~/.network_monitor_config.json')
+    with open(config_path, 'w') as f:
         json.dump(config, f, indent=2)
 
-    # Update global variables
-    update_global_variables(config)
-
+    print(f"Configuration saved to {config_path}")
     return config
 
-def update_global_variables(config):
-    global PING_TARGETS, GRAFANA_API_KEY, OLLAMA_URL, OLLAMA_MODEL, OPENAI_API_KEY, ANTHROPIC_API_KEY, CUSTOM_LLM_URL, CUSTOM_LLM_API_KEY
-
-    PING_TARGETS = config['ping_targets']
-    GRAFANA_API_KEY = config['grafana_api_key']
-
-    llm_config = config['llm']
-    if llm_config['provider'] == 'ollama':
-        OLLAMA_URL = llm_config['url']
-        OLLAMA_MODEL = llm_config['model']
-    elif llm_config['provider'] == 'openai':
-        OPENAI_API_KEY = llm_config['api_key']
-    elif llm_config['provider'] == 'anthropic':
-        ANTHROPIC_API_KEY = llm_config['api_key']
-    elif llm_config['provider'] == 'custom':
-        CUSTOM_LLM_URL = llm_config['url']
-        CUSTOM_LLM_API_KEY = llm_config['api_key']
-
 def load_configuration():
-    if os.path.exists('network_monitor_config.json'):
-        with open('network_monitor_config.json', 'r') as f:
-            config = json.load(f)
-        update_global_variables(config)
-        return config
+    config_path = os.path.expanduser('~/.network_monitor_config.json')
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            return json.load(f)
     return None
 
 def main():
-    setup_data_retention_policy()
-    
-    global config
-    if not config:
-        config = configure_network_monitor()
-    
-    last_speed_test_time = 0
-    last_report_time = 0
-    last_purge_time = 0
-    
-    while True:
-        try:
-            current_time = int(time.time())
-            
-            # Measure and write latency for both targets (runs every second)
-            latency_results = [measure_latency(target) for target in PING_TARGETS]
-            
-            if latency_results:
-                avg_latency = average_latency_results(latency_results)
-                if avg_latency:
-                    write_to_influxdb("latency", avg_latency)
-                    logging.info(f"Wrote average latency (excluding gateway and disconnected targets) to InfluxDB: {avg_latency}")
-                
-                # Write individual target results
-                for result in latency_results:
-                    target = result['target']
-                    del result['target']  # Remove target from the data to be written
-                    write_to_influxdb(f"latency_{target}", result)
-                    logging.info(f"Wrote latency for {target} to InfluxDB: {result}")
-            else:
-                logging.warning("No latency results to write to InfluxDB")
+    global PING_TARGETS, GRAFANA_API_KEY, LLM_CONFIG
 
-            # Run speed test every 4 hours (14400 seconds)
-            if current_time - last_speed_test_time >= 14400:
-                logging.info("Starting 4-hourly speed test")
-                speed = run_speed_test()
-                if speed:
-                    write_to_influxdb("speed_test", speed)
-                    logging.info(f"Wrote speed test results to InfluxDB: {speed}")
-                last_speed_test_time = current_time
-                logging.info("Completed 4-hourly speed test")
-
-            # Generate and write network report every 15 minutes
-            if current_time - last_report_time >= 900:  # 900 seconds = 15 minutes
-                logging.info("Generating new network report")
-                extended_data = get_extended_network_data()
-                report = generate_network_report(extended_data, config['llm'])
-                write_report_to_influxdb(report)
-                last_report_time = current_time
-            
-            # Purge old data daily
-            if current_time - last_purge_time >= 86400:  # 86400 seconds = 1 day
-                purge_old_data()
-                last_purge_time = current_time
-
-        except Exception as e:
-            logging.error(f"Unexpected error in main loop: {str(e)}")
-            logging.exception("Exception details:")  # This will log the full stack trace
-
-        time.sleep(1)  # Wait for 1 second before the next measurement
-
-if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Network Monitor")
-    parser.add_argument("--configure", action="store_true", help="Run in configuration mode")
+    parser.add_argument("--configure", action="store_true", help="Run configuration wizard")
+    parser.add_argument("--start", action="store_true", help="Start monitoring")
     args = parser.parse_args()
 
     if args.configure:
-        configure_network_monitor()
+        configure()
+        sys.exit(0)
+
+    if args.start:
+        config = load_configuration()
+        if not config:
+            print("No configuration found. Please run with --configure first.")
+            sys.exit(1)
+
+        PING_TARGETS = config['ping_targets']
+        GRAFANA_API_KEY = config['grafana_api_key']
+        LLM_CONFIG = config['llm']
+
+        # Initialize InfluxDB client
+        client = InfluxDBClient(host=INFLUXDB_HOST, port=INFLUXDB_PORT)
+        client.create_database(INFLUXDB_DATABASE)
+        client.switch_database(INFLUXDB_DATABASE)
+
+        print("Starting network monitoring...")
+        while True:
+            for target in PING_TARGETS:
+                latency = measure_latency(target)
+                write_to_influxdb(f"latency_{target}", latency)
+
+            time.sleep(60)  # Wait for 1 minute before next measurement
+
     else:
-        main()
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()
