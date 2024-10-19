@@ -9,6 +9,7 @@ import requests
 import re
 import threading
 import math
+from statistics import mean, stdev
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,7 +39,7 @@ GRAFANA_API_KEY = 'glsa_VMUyp1G9lnCSe3gy42Nk0tT0qbUd8N2T_980a759f'
 
 # Ollama configuration
 OLLAMA_URL = "http://100.100.58.42:9090/api/generate"
-OLLAMA_MODEL = "llama3.1:8b-instruct-q8_0"
+OLLAMA_MODEL = "llama3.1:8b-instruct-fp16"
 
 def calculate_moving_average(values):
     return sum(values) / len(values) if values else None
@@ -297,51 +298,78 @@ def get_recent_data(minutes=15):
         'speed': list(speed_result.get_points())
     }
 
-def generate_network_report(hourly_data, recent_data):
-    """Generate a concise, narrative-driven network report using Ollama."""
+def get_extended_network_data():
+    end_time = datetime.utcnow()
+    start_time_24h = end_time - timedelta(hours=24)
+
+    def query_data(measurement, start_time):
+        query = f"""
+        SELECT *
+        FROM "{measurement}"
+        WHERE time >= '{start_time.isoformat()}Z' AND time <= '{end_time.isoformat()}Z'
+        """
+        return list(client.query(query).get_points())
+
+    latency_24h = query_data("latency", start_time_24h)
+    speed_24h = query_data("speed_test", start_time_24h)
+
+    # Calculate number of disconnects in last 24 hours
+    disconnects_24h = sum(1 for point in latency_24h if point.get('status') == 'disconnected')
+
+    # Identify sustained issues (e.g., latency > 100ms for > 5 minutes)
+    sustained_issues = []
+    issue_start = None
+    for point in latency_24h:
+        if point['avg'] > 100:
+            if issue_start is None:
+                issue_start = point['time']
+        elif issue_start is not None:
+            issue_end = point['time']
+            duration = (datetime.fromisoformat(issue_end.rstrip('Z')) - 
+                        datetime.fromisoformat(issue_start.rstrip('Z'))).total_seconds() / 60
+            if duration > 5:
+                sustained_issues.append({
+                    'start': issue_start,
+                    'end': issue_end,
+                    'duration_minutes': duration
+                })
+            issue_start = None
+
+    return {
+        'latency_24h': latency_24h,
+        'speed_24h': speed_24h,
+        'disconnects_24h': disconnects_24h,
+        'sustained_issues': sustained_issues
+    }
+
+def generate_network_report(extended_data):
     prompt = f"""
-    Generate a brief, narrative-driven network health report based on the following data:
+    You are a highly advanced, professional AI network monitoring system. Your task is to analyze network performance data and provide a concise, factual summary focusing only on significant issues or trends. Use the following data for your analysis:
 
-    Last Hour Averages:
-    Latency:
-    - Min: {hourly_data['latency_avg']['min']:.2f} ms
-    - Avg: {hourly_data['latency_avg']['avg']:.2f} ms
-    - Max: {hourly_data['latency_avg']['max']:.2f} ms
-    - Mdev: {hourly_data['latency_avg']['mdev']:.2f} ms
-    - Packet Loss: {hourly_data['latency_avg']['packet_loss']:.2f}%
+    Latency Data (last 24 hours):
+    {json.dumps(extended_data['latency_24h'], indent=2)}
 
-    Speed:
-    - Download: {hourly_data['speed_avg']['download']:.2f} Mbps
-    - Upload: {hourly_data['speed_avg']['upload']:.2f} Mbps
-    - Ping: {hourly_data['speed_avg']['ping']:.2f} ms
+    Speed Test Data (last 24 hours):
+    {json.dumps(extended_data['speed_24h'], indent=2)}
 
-    Last 15 Minutes Data:
-    Latency:
-    {json.dumps(recent_data['latency'], indent=2)}
+    Network Status:
+    Disconnects (24h): {extended_data['disconnects_24h']}
 
-    Speed:
-    {json.dumps(recent_data['speed'], indent=2)}
+    Sustained Issues (latency > 100ms for > 5 minutes):
+    {json.dumps(extended_data['sustained_issues'], indent=2)}
 
-    Latency Comparison:
-    Averages:
-    - 8.8.8.8: {hourly_data['latency_avg_8.8.8.8']['avg']:.2f} ms
-    - 1.1.1.1: {hourly_data['latency_avg_1.1.1.1']['avg']:.2f} ms
-    - Gateway (10.1.1.1): {hourly_data['latency_avg_10.1.1.1']['avg']:.2f} ms
+    Guidelines:
+    1. Provide a brief, professional summary in 2-3 sentences.
+    2. Focus only on significant deviations, issues, or trends, particularly in the last hour.
+    3. Do not mention specific numbers unless there's a notable issue or extreme spike.
+    4. Maintain a serious, formal tone throughout the report.
+    5. If there are no significant issues, provide a brief "normal operations" message.
+    6. Highlight any sustained issues or frequent disconnects if present.
+    7. Pay special attention to sudden spikes or drops in latency or speed.
+    8. Remember that gradual increases in latency are not typical; focus on significant fluctuations.
+    9. Do not provide any advice or suggestions for fixes.
 
-    Raw Data (last 250 samples):
-    8.8.8.8: {json.dumps(hourly_data['latency_samples_8.8.8.8'], indent=2)}
-    1.1.1.1: {json.dumps(hourly_data['latency_samples_1.1.1.1'], indent=2)}
-    Gateway (10.1.1.1): {json.dumps(hourly_data['latency_samples_10.1.1.1'], indent=2)}
-
-    Rules:
-    1. Provide a concise summary in exactly two to three sentences.
-    2. Focus on the overall health and any significant deviations or trends based on the raw data and the averages.
-    3. Use a conversational, but professional, clinical and very serious tone.
-    4. Do not include technical jargon or specific numbers.
-    5. Do not suggest improvements or mention buffer bloat.
-    6. Look for any significant latency spike, speed drops, or packet loss. A few seconds of high latency or a sudden drop in speed is not relevant. look for sustained high latency or low speed.
-
-    Your response should be brief and informative, suitable for a quick network health check by a non-technical user.
+    Your response should be brief and informative, suitable for a quick network health assessment by a technical professional. Only mention specific data points if they represent a significant issue or anomaly.
     """
 
     try:
@@ -350,10 +378,10 @@ def generate_network_report(hourly_data, recent_data):
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.2,
+                "temperature": 0.3,
                 "max_tokens": 150
             }
-        }, timeout=10)
+        }, timeout=200)  # 200 seconds timeout
         response.raise_for_status()
         
         report = response.json().get('response', '').strip()
@@ -469,9 +497,8 @@ def main():
             # Generate and write network report every 15 minutes
             if current_time - last_report_time >= 900:  # 900 seconds = 15 minutes
                 logging.info("Generating new network report")
-                hourly_data = get_last_hour_data()
-                recent_data = get_recent_data(minutes=15)
-                report = generate_network_report(hourly_data, recent_data)
+                extended_data = get_extended_network_data()
+                report = generate_network_report(extended_data)
                 write_report_to_influxdb(report)
                 last_report_time = current_time
             
