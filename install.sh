@@ -17,8 +17,11 @@ sudo apt-get install -y python3-pip influxdb grafana speedtest-cli
 # Install Python dependencies
 pip3 install influxdb requests
 
-# Download the network_monitor.py script
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/network_monitor.py
+# Clone the repository if not already in it
+if [ ! -f "network_monitor.py" ]; then
+    git clone https://github.com/bveiseh/Network-Monitor.git
+    cd Network-Monitor
+fi
 
 # Make the script executable
 chmod +x network_monitor.py

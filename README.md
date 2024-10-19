@@ -16,12 +16,13 @@ Network Monitor is a Python-based tool designed to continuously monitor network 
 
 1. Ensure you have sudo privileges on your system.
 
-2. Download the installation script:
+2. Clone the repository:
    ```
-   curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/install.sh
+   git clone https://github.com/bveiseh/Network-Monitor.git
+   cd Network-Monitor
    ```
 
-3. Make the script executable:
+3. Make the installation script executable:
    ```
    chmod +x install.sh
    ```
@@ -40,3 +41,44 @@ Network Monitor is a Python-based tool designed to continuously monitor network 
 ## Usage
 
 To start monitoring, run:
+
+```
+sudo network-monitor --start
+```
+
+## Accessing the Dashboard
+
+1. Open a web browser and go to `http://localhost:3000`
+2. Log in with the default credentials (username: admin, password: admin)
+3. You will be prompted to change the password on first login
+4. Navigate to the "Network Monitor Dashboard"
+
+## Troubleshooting
+
+If you encounter issues during installation or operation, try the following steps:
+
+1. Check system logs:
+   ```
+   sudo journalctl -u network-monitor
+   ```
+
+2. Verify service status:
+   ```
+   sudo systemctl status influxdb grafana-server
+   ```
+
+3. Check InfluxDB and Grafana logs:
+   ```
+   sudo journalctl -u influxdb
+   sudo journalctl -u grafana-server
+   ```
+
+If you're still experiencing issues, please open an issue on the [GitHub repository](https://github.com/bveiseh/Network-Monitor) with detailed information about your setup and the problem you're encountering.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is open source and available under the [MIT License](LICENSE).
