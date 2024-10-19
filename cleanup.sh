@@ -24,20 +24,44 @@ print_error() {
     exit 1
 }
 
-print_status "Starting cleanup of Enhanced Network Monitor..."
+print_status "Starting cleanup of Network Monitor..."
 
-# Check if we're in the correct directory
-if [ ! -f "docker-compose.yml" ]; then
-    print_error "docker-compose.yml not found. Please run this script from the network-monitor directory."
-fi
+# Stop and disable services
+print_status "Stopping and disabling services..."
+sudo systemctl stop network-monitor.service || true
+sudo systemctl disable network-monitor.service || true
+sudo systemctl stop influxdb || true
+sudo systemctl disable influxdb || true
+sudo systemctl stop grafana-server || true
+sudo systemctl disable grafana-server || true
 
-# Stop and remove containers
-print_status "Stopping and removing Docker containers..."
-docker-compose down -v
+# Remove installed packages
+print_status "Removing installed packages..."
+sudo apt-get remove -y python3-pip influxdb grafana speedtest-cli || true
+sudo apt-get autoremove -y
 
-# Remove project files
-print_status "Removing project files..."
-cd ..
-rm -rf network-monitor
+# Remove Python dependencies
+print_status "Removing Python dependencies..."
+pip3 uninstall -y influxdb requests || true
+
+# Remove configuration files and scripts
+print_status "Removing configuration files and scripts..."
+sudo rm -f /etc/network_monitor_config.json
+sudo rm -f /usr/local/bin/network-monitor
+sudo rm -f /etc/systemd/system/network-monitor.service
+
+# Remove cloned repository
+print_status "Removing cloned repository..."
+sudo rm -rf ~/Network-Monitor
+
+# Clean up InfluxDB and Grafana data
+print_status "Cleaning up InfluxDB and Grafana data..."
+sudo rm -rf /var/lib/influxdb
+sudo rm -rf /var/lib/grafana
+
+# Reload systemd
+sudo systemctl daemon-reload
 
 print_success "Cleanup completed successfully!"
+print_status "Note: Some components may require manual removal if they were installed differently."
+print_status "You may need to reboot your system to complete the cleanup process."

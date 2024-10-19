@@ -4,14 +4,24 @@ set -e
 
 echo "Installing Network Monitor..."
 
+# Update GPG key for InfluxDB
+curl -sL https://repos.influxdata.com/influxdb.key | sudo apt-key add -
+
+# Update package lists
+sudo apt-get update
+
 # Check if Python 3 is installed
 if ! command -v python3 &> /dev/null; then
     echo "Python 3 is not installed. Please install Python 3 and try again."
     exit 1
 fi
 
+# Remove conflicting speedtest package if it exists
+if dpkg -l | grep -q speedtest; then
+    sudo apt-get remove -y speedtest
+fi
+
 # Install required system packages
-sudo apt-get update
 sudo apt-get install -y python3-pip influxdb grafana speedtest-cli
 
 # Install Python dependencies
