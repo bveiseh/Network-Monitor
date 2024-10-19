@@ -484,15 +484,15 @@ def main():
             else:
                 logging.warning("No latency results to write to InfluxDB")
 
-            # Run speed test every hour (3600 seconds)
-            if current_time - last_speed_test_time >= 3600:
-                logging.info("Starting hourly speed test")
+            # Run speed test every 4 hours (14400 seconds)
+            if current_time - last_speed_test_time >= 14400:
+                logging.info("Starting 4-hourly speed test")
                 speed = run_speed_test()
                 if speed:
                     write_to_influxdb("speed_test", speed)
                     logging.info(f"Wrote speed test results to InfluxDB: {speed}")
                 last_speed_test_time = current_time
-                logging.info("Completed hourly speed test")
+                logging.info("Completed 4-hourly speed test")
 
             # Generate and write network report every 15 minutes
             if current_time - last_report_time >= 900:  # 900 seconds = 15 minutes

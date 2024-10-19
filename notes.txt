@@ -1,10 +1,85 @@
-sudo systemctl restart network_monitor.service
-
-   sudo journalctl -fu network_monitor.service
-
-      sudo systemctl status network_monitor.service
-
-
 # test 
 
+# Network Monitor Service Setup and Management
 
+# Create systemd service file
+sudo nano /etc/systemd/system/network-monitor.service
+
+# Content for network-monitor.service:
+# [Unit]
+# Description=Network Monitor Service
+# After=network.target
+#
+# [Service]
+# ExecStart=/usr/bin/python3 /home/pi/Network-Monitor/network_monitor.py
+# WorkingDirectory=/home/pi/Network-Monitor
+# Restart=always
+# User=pi
+#
+# [Install]
+# WantedBy=multi-user.target
+
+# Reload systemd manager configuration
+sudo systemctl daemon-reload
+
+# Enable the service to start on boot
+sudo systemctl enable network-monitor.service
+
+# Start the service
+sudo systemctl start network-monitor.service
+
+# Check the status of the service
+sudo systemctl status network-monitor.service
+
+# Restart the service
+sudo systemctl restart network-monitor.service
+
+# Stop the service
+sudo systemctl stop network-monitor.service
+
+# Monitoring Logs
+
+# View all logs for the service
+sudo journalctl -u network-monitor.service
+
+# View the most recent logs and follow new entries in real-time
+sudo journalctl -u network-monitor.service -f
+
+# View logs since the last boot
+sudo journalctl -u network-monitor.service -b
+
+# View logs for the last hour
+sudo journalctl -u network-monitor.service --since "1 hour ago"
+
+# View logs between two dates
+sudo journalctl -u network-monitor.service --since "2023-05-01" --until "2023-05-02"
+
+# View only error and higher priority messages
+sudo journalctl -u network-monitor.service -p err
+
+# If using file-based logging, monitor the log file directly
+tail -f /home/pi/Network-Monitor/network_monitor.log
+
+# Remember to add logging configuration to your Python script if using file-based logging
+
+# Verify InfluxDB and Grafana status
+sudo systemctl status influxdb
+sudo systemctl status grafana-server
+
+# If needed, manually enable and start InfluxDB and Grafana
+sudo systemctl enable influxdb
+sudo systemctl start influxdb
+sudo systemctl enable grafana-server
+sudo systemctl start grafana-server
+
+# Reboot to test persistence
+sudo reboot
+
+# After reboot, check status of all services
+sudo systemctl status influxdb
+sudo systemctl status grafana-server
+sudo systemctl status network-monitor
+
+
+git config --global user.email "you@example.com"
+  git config --global user.name "Your Name"

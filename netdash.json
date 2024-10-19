@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 5,
+  "id": 4,
   "links": [],
   "liveNow": true,
   "panels": [
@@ -32,48 +32,18 @@
           "color": {
             "mode": "thresholds"
           },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "line+area"
-            }
-          },
           "mappings": [
             {
               "options": {
-                "0": {
-                  "color": "red",
-                  "index": 0,
-                  "text": "Disconnected"
-                },
-                "1": {
+                "connected": {
                   "color": "green",
-                  "index": 1,
+                  "index": 0,
                   "text": "Connected"
+                },
+                "disconnected": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "Disconnected"
                 }
               },
               "type": "value"
@@ -104,36 +74,39 @@
       },
       "id": 18,
       "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": false
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
+        "textMode": "auto"
       },
+      "pluginVersion": "11.2.2",
       "targets": [
         {
           "datasource": {
             "type": "influxdb",
             "uid": "network_metrics"
           },
-          "query": "SELECT CASE WHEN status = 'connected' THEN 1 ELSE 0 END AS connection_status FROM \"latency\" WHERE $timeFilter GROUP BY time($__interval) fill(previous)",
+          "query": "SELECT last(\"status\") AS connection_status FROM \"latency\" WHERE $timeFilter GROUP BY time($__interval) fill(previous)",
           "rawQuery": true,
           "refId": "A"
         }
       ],
       "title": "Network Connectivity Status",
-      "type": "timeseries"
+      "type": "stat"
     },
     {
       "datasource": {
         "default": false,
         "type": "influxdb",
-        "uid": "fe0cp89x0v20wf"
+        "uid": "network_metrics"
       },
       "fieldConfig": {
         "defaults": {
@@ -268,12 +241,12 @@
         },
         "showAdvancedTypes": true
       },
-      "pluginVersion": "11.2.2",
+      "pluginVersion": "11.2.2+security-01",
       "targets": [
         {
           "datasource": {
             "type": "influxdb",
-            "uid": "fe0cp89x0v20wf"
+            "uid": "network_metrics"
           },
           "query": "SELECT last(\"content\") FROM \"network_report\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
           "rawQuery": true,
@@ -334,14 +307,14 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "pluginVersion": "11.2.2",
+      "pluginVersion": "11.2.2+security-01",
       "targets": [
         {
           "datasource": {
             "type": "influxdb",
             "uid": "network_metrics"
           },
-          "query": "SELECT mean(\"avg\") FROM \"latency\" WHERE \"host\" != '10.1.1.1' AND $timeFilter GROUP BY time($__interval) fill(null)",
+          "query": "SELECT mean(\"avg\") FROM \"latency\" WHERE \"target\" != '10.1.1.1' AND $timeFilter GROUP BY time($__interval) fill(null)",
           "rawQuery": true,
           "refId": "A"
         }
@@ -503,8 +476,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -597,8 +569,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -691,8 +662,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -785,8 +755,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -879,8 +848,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -973,8 +941,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1067,8 +1034,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1117,7 +1083,7 @@
       "datasource": {
         "default": false,
         "type": "influxdb",
-        "uid": "fe0cp89x0v20wf"
+        "uid": "network_metrics"
       },
       "fieldConfig": {
         "defaults": {
@@ -1136,8 +1102,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1175,7 +1140,7 @@
             "type": "influxdb",
             "uid": "network_metrics"
           },
-          "query": "SELECT\n  last(\"avg\") as \"Avg Latency (ms)\",\n  last(\"download\") as \"Download (Mbps)\",\n  last(\"upload\") as \"Upload (Mbps)\"\nFROM\n  latency, speed_test\nWHERE\n  $timeFilter\n",
+          "query": "SELECT last(\"avg\") as \"Avg Latency (ms)\" FROM \"latency\" WHERE $timeFilter;\nSELECT last(\"download\") as \"Download (Mbps)\", last(\"upload\") as \"Upload (Mbps)\" FROM \"speed_test\" WHERE $timeFilter",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
@@ -1232,8 +1197,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1282,7 +1246,7 @@
       "datasource": {
         "default": false,
         "type": "influxdb",
-        "uid": "fe0cp89x0v20wf"
+        "uid": "network_metrics"
       },
       "fieldConfig": {
         "defaults": {
@@ -1327,8 +1291,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1417,6 +1380,6 @@
   "timezone": "",
   "title": "Enhanced Network Monitor Dashboard",
   "uid": "fe0atovlm7o5cd",
-  "version": 19,
+  "version": 1,
   "weekStart": ""
 }
