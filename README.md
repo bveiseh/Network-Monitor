@@ -48,10 +48,18 @@ sudo network-monitor --start
 
 ## Accessing the Dashboard
 
-1. Open a web browser and go to `http://localhost:3000`
-2. Log in with the default credentials (username: admin, password: admin)
-3. You will be prompted to change the password on first login
-4. Navigate to the "Network Monitor Dashboard"
+1. Determine your device's IP address:
+   ```
+   hostname -I | awk '{print $1}'
+   ```
+
+2. Open a web browser and go to `http://<device_ip>:3000` (replace `<device_ip>` with your device's IP address).
+
+3. Log in with the default credentials (username: admin, password: admin).
+
+4. You will be prompted to change the password on first login.
+
+5. Navigate to the "Network Monitor Dashboard".
 
 ## Troubleshooting
 

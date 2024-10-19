@@ -45,11 +45,18 @@ sudo sed -i '1i#!/usr/bin/env python3' /usr/local/bin/network-monitor
 # Make sure the script is executable
 sudo chmod +x /usr/local/bin/network-monitor
 
+# Get the device's IP address
+device_ip=$(hostname -I | awk '{print $1}')
+
+# Update InfluxDB configuration to bind to the device's IP
+sudo sed -i "s/^# bind-address = \"127.0.0.1:8086\"/bind-address = \"$device_ip:8086\"/" /etc/influxdb/influxdb.conf
+
+# Update Grafana configuration to bind to the device's IP
+sudo sed -i "s/^;http_addr =/http_addr = $device_ip/" /etc/grafana/grafana.ini
+
 # Start and enable InfluxDB and Grafana services
-sudo systemctl start influxdb
-sudo systemctl enable influxdb
-sudo systemctl start grafana-server
-sudo systemctl enable grafana-server
+sudo systemctl restart influxdb
+sudo systemctl restart grafana-server
 
 # Configuration
 echo "Configuring Network Monitor..."
