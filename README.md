@@ -23,8 +23,8 @@ Choose one of the following installation methods based on your preference and sy
 
 2. Clone the repository:
    ```
-   git clone https://github.com/yourusername/enhanced-network-monitor.git
-   cd enhanced-network-monitor
+   git clone https://github.com/bveiseh/Network-Monitor.git
+   cd Network-Monitor
    ```
 
 3. Run the Docker installation script:
@@ -135,20 +135,35 @@ sudo systemctl status network-monitor  # Check the current status of the service
 
 ## Troubleshooting
 
-- For Docker installations, check the logs:
-  ```
-  docker-compose logs network-monitor
-  ```
-- For Bash installations, check the system logs:
-  ```
-  sudo journalctl -u network-monitor
-  ```
-- Ensure InfluxDB and Grafana services are running
-- If you encounter issues with Grafana or InfluxDB, check their respective logs:
-  ```
-  sudo journalctl -u grafana-server
-  sudo journalctl -u influxdb
-  ```
+If you encounter issues during installation or operation, try the following steps:
+
+1. Check system logs:
+   - For Docker installations: `docker-compose logs`
+   - For Bash installations: `sudo journalctl -u network-monitor`
+
+2. Verify service status:
+   - For Docker: `docker ps` to check if all containers are running
+   - For Bash: `sudo systemctl status network-monitor influxdb grafana-server`
+
+3. Port conflicts:
+   - If you see errors about ports being in use, you may need to modify the port mappings in `docker-compose.yml` (for Docker installations) or the service configurations (for Bash installations).
+
+4. Permission issues:
+   - Ensure you're running the installation scripts with appropriate permissions (sudo for Bash installation).
+
+5. Network issues:
+   - If the network monitor can't reach the internet, check your firewall settings and ensure the necessary ports are open.
+
+6. LLM provider issues:
+   - Verify that your API keys and URLs for the chosen LLM provider are correct.
+   - Check the provider's status page for any ongoing issues.
+
+7. InfluxDB or Grafana issues:
+   - Check their respective logs:
+     - Docker: `docker logs influxdb` or `docker logs grafana`
+     - Bash: `sudo journalctl -u influxdb` or `sudo journalctl -u grafana-server`
+
+If you're still experiencing issues, please open an issue on the GitHub repository with detailed information about your setup and the problem you're encountering.
 
 ## Contributing
 

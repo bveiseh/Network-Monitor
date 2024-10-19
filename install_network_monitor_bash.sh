@@ -24,12 +24,62 @@ print_error() {
     exit 1
 }
 
+# Pre-flight checks
+check_requirements() {
+    print_status "Checking system requirements..."
+    
+    # Check if running as root
+    if [ "$EUID" -ne 0 ]; then
+        print_error "Please run as root or with sudo"
+    fi
+
+    # Check Python version
+    if ! command -v python3 &> /dev/null; then
+        print_error "Python 3 is not installed. Please install Python 3 and try again."
+    fi
+
+    # Check if ports are available
+    if lsof -Pi :8086 -sTCP:LISTEN -t >/dev/null ; then
+        print_error "Port 8086 is already in use. Please free up this port or modify the InfluxDB configuration."
+    fi
+
+    if lsof -Pi :3000 -sTCP:LISTEN -t >/dev/null ; then
+        print_error "Port 3000 is already in use. Please free up this port or modify the Grafana configuration."
+    fi
+
+    print_success "All system requirements met."
+}
+
+# Verify installation
+verify_installation() {
+    print_status "Verifying installation..."
+    
+    # Check if services are running
+    if systemctl is-active --quiet influxdb; then
+        print_success "InfluxDB service is running."
+    else
+        print_error "InfluxDB service is not running. Please check the logs."
+    fi
+
+    if systemctl is-active --quiet grafana-server; then
+        print_success "Grafana service is running."
+    else
+        print_error "Grafana service is not running. Please check the logs."
+    fi
+
+    if systemctl is-active --quiet network-monitor; then
+        print_success "Network monitor service is running."
+    else
+        print_error "Network monitor service is not running. Please check the logs."
+    fi
+
+    print_success "All services are running. Installation verified."
+}
+
 print_status "Starting installation of Enhanced Network Monitor (Bash version)..."
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    print_error "Please run as root or with sudo"
-fi
+# Run pre-flight checks
+check_requirements
 
 # Install required packages
 print_status "Installing required packages..."
@@ -42,9 +92,9 @@ cd /opt/network-monitor
 
 # Download necessary files
 print_status "Downloading project files..."
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/network_monitor.py
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/requirements.txt
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/netdash.json
+curl -O https://raw.githubusercontent.com/bveiseh/Network-Monitor/main/network_monitor.py
+curl -O https://raw.githubusercontent.com/bveiseh/Network-Monitor/main/requirements.txt
+curl -O https://raw.githubusercontent.com/bveiseh/Network-Monitor/main/netdash.json
 
 # Set up Python virtual environment
 print_status "Setting up Python virtual environment..."
@@ -121,10 +171,12 @@ systemctl daemon-reload
 systemctl enable network-monitor
 systemctl start network-monitor
 
+# Verify installation
+verify_installation
+
 print_success "Installation completed successfully!"
 echo -e "${GREEN}You can access Grafana at http://localhost:3000 (default credentials: admin/admin)${NC}"
 echo -e "${YELLOW}Please change the default password after your first login.${NC}"
 echo -e "${YELLOW}Imported dashboard ID: ${DASHBOARD_ID}${NC}"
 echo -e "${YELLOW}Grafana API Key: ${GRAFANA_API_KEY}${NC}"
 echo -e "${YELLOW}The Network Monitor service is now running. You can check its status with: systemctl status network-monitor${NC}"
-

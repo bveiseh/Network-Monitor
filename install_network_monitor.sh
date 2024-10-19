@@ -24,17 +24,58 @@ print_error() {
     exit 1
 }
 
+# Pre-flight checks
+check_requirements() {
+    print_status "Checking system requirements..."
+    
+    # Check Docker
+    if ! command -v docker &> /dev/null; then
+        print_error "Docker is not installed. Please install Docker and try again."
+    fi
+
+    # Check Docker Compose
+    if ! command -v docker-compose &> /dev/null; then
+        print_error "Docker Compose is not installed. Please install Docker Compose and try again."
+    fi
+
+    # Check if ports are available
+    if lsof -Pi :9834 -sTCP:LISTEN -t >/dev/null ; then
+        print_error "Port 9834 is already in use. Please free up this port or modify the docker-compose.yml file."
+    fi
+
+    print_success "All system requirements met."
+}
+
+# Verify installation
+verify_installation() {
+    print_status "Verifying installation..."
+    
+    # Check if containers are running
+    if [ "$(docker ps -q -f name=network-monitor)" ]; then
+        print_success "Network monitor container is running."
+    else
+        print_error "Network monitor container is not running. Please check the logs."
+    fi
+
+    if [ "$(docker ps -q -f name=influxdb)" ]; then
+        print_success "InfluxDB container is running."
+    else
+        print_error "InfluxDB container is not running. Please check the logs."
+    fi
+
+    if [ "$(docker ps -q -f name=grafana)" ]; then
+        print_success "Grafana container is running."
+    else
+        print_error "Grafana container is not running. Please check the logs."
+    fi
+
+    print_success "All containers are running. Installation verified."
+}
+
 print_status "Starting installation of Enhanced Network Monitor..."
 
-# Check if Docker is installed
-if ! command -v docker &> /dev/null; then
-    print_error "Docker is not installed. Please install Docker and try again."
-fi
-
-# Check if Docker Compose is installed
-if ! command -v docker-compose &> /dev/null; then
-    print_error "Docker Compose is not installed. Please install Docker Compose and try again."
-fi
+# Run pre-flight checks
+check_requirements
 
 # Create project directory
 mkdir -p network-monitor
@@ -42,11 +83,11 @@ cd network-monitor
 
 # Download necessary files
 print_status "Downloading project files..."
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/Dockerfile
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/network_monitor.py
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/requirements.txt
-curl -O https://raw.githubusercontent.com/yourusername/network-monitor/main/netdash.json
+curl -O https://raw.githubusercontent.com/bveiseh/Network-Monitor/main/Dockerfile
+curl -O https://raw.githubusercontent.com/bveiseh/Network-Monitor/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/bveiseh/Network-Monitor/main/network_monitor.py
+curl -O https://raw.githubusercontent.com/bveiseh/Network-Monitor/main/requirements.txt
+curl -O https://raw.githubusercontent.com/bveiseh/Network-Monitor/main/netdash.json
 
 # Run the Python script in configuration mode
 print_status "Configuring Network Monitor..."
@@ -88,6 +129,9 @@ DASHBOARD_ID=$(curl -X POST -H "Content-Type: application/json" -d @netdash.json
 
 # Update the network_monitor.py file with the Grafana API key
 sed -i "s/GRAFANA_API_KEY = '.*'/GRAFANA_API_KEY = '${GRAFANA_API_KEY}'/" network_monitor.py
+
+# Verify installation
+verify_installation
 
 print_success "Installation completed successfully!"
 echo -e "${GREEN}You can access Grafana at http://localhost:9834 (default credentials: admin/admin)${NC}"
