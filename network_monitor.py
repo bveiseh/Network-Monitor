@@ -11,6 +11,8 @@ import threading
 import math
 from statistics import mean, stdev
 import openai  # Add this import
+import os
+import argparse
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,11 +38,21 @@ speed_deque = deque(maxlen=MOVING_AVERAGE_WINDOW)
 # Grafana configuration
 GRAFANA_HOST = 'http://localhost:3000'
 DASHBOARD_UID = 'fe0atovlm7o5cd'
-GRAFANA_API_KEY = 'glsa_VMUyp1G9lnCSe3gy42Nk0tT0qbUd8N2T_980a759f'
+GRAFANA_API_KEY = 'YOUR_GRAFANA_API_KEY_HERE'
 
 # Ollama configuration
-OLLAMA_URL = "http://100.100.58.42:9090/api/generate"
+OLLAMA_URL = "http://localhost:11434"
 OLLAMA_MODEL = "llama3.1:8b-instruct-fp16"
+
+# OpenAI configuration
+OPENAI_API_KEY = ""
+
+# Anthropic configuration
+ANTHROPIC_API_KEY = ""
+
+# Custom LLM configuration
+CUSTOM_LLM_URL = ""
+CUSTOM_LLM_API_KEY = ""
 
 def calculate_moving_average(values):
     return sum(values) / len(values) if values else None
@@ -491,6 +503,7 @@ def purge_old_data():
     logging.info("Purged data older than 30 days from all measurements")
 
 def configure_network_monitor():
+    config = {}
     print("Network Monitor Configuration")
     
     # LLM Configuration
@@ -505,25 +518,25 @@ def configure_network_monitor():
     if choice == '1':
         url = input("Enter Ollama URL (default: http://localhost:11434): ") or "http://localhost:11434"
         model = input("Enter Ollama model name: ")
-        llm_config = {'provider': 'ollama', 'url': url, 'model': model}
+        config['llm'] = {'provider': 'ollama', 'url': url, 'model': model}
     elif choice == '2':
         api_key = input("Enter OpenAI API key: ")
         model = input("Enter OpenAI model name (e.g., gpt-4o-mini): ")
-        llm_config = {'provider': 'openai', 'api_key': api_key, 'model': model}
+        config['llm'] = {'provider': 'openai', 'api_key': api_key, 'model': model}
     elif choice == '3':
         api_key = input("Enter Anthropic API key: ")
         model = input("Enter Anthropic model name (e.g., claude-3-sonnet): ")
-        llm_config = {'provider': 'anthropic', 'api_key': api_key, 'model': model}
+        config['llm'] = {'provider': 'anthropic', 'api_key': api_key, 'model': model}
     elif choice == '4':
         url = input("Enter custom LLM API URL: ")
         api_key = input("Enter API key (if required): ")
         model = input("Enter model name: ")
-        llm_config = {'provider': 'custom', 'url': url, 'api_key': api_key, 'model': model}
+        config['llm'] = {'provider': 'custom', 'url': url, 'api_key': api_key, 'model': model}
     else:
         print("Invalid choice. Using default Ollama configuration.")
-        llm_config = {'provider': 'ollama', 'url': "http://localhost:11434", 'model': "llama2"}
+        config['llm'] = {'provider': 'ollama', 'url': "http://localhost:11434", 'model': "llama2"}
 
-    # Ping Target Configuration
+    # Configure ping targets
     print("\nPing Target Configuration")
     print("Recommended targets: 1.1.1.1, 8.8.8.8")
     print("Current gateway target: 10.1.1.1")
@@ -533,19 +546,73 @@ def configure_network_monitor():
     targets.append(input("Enter second ping target (default: 8.8.8.8): ") or "8.8.8.8")
     gateway = input("Enter your gateway IP address (default: 10.1.1.1): ") or "10.1.1.1"
     targets.append(gateway)
+    config['ping_targets'] = targets
 
-    return llm_config, targets
+    # Grafana API Key Configuration
+    print("\nGrafana API Key Configuration")
+    print("Attempting to generate Grafana API key automatically...")
+    
+    grafana_url = "http://localhost:9834"  # Update this if your Grafana URL is different
+    grafana_user = "admin"
+    grafana_password = "admin"  # This should be changed after first login
 
-# Update the global PING_TARGETS variable
-def update_ping_targets(targets):
-    global PING_TARGETS
-    PING_TARGETS = targets
+    try:
+        # Create Grafana API key
+        api_key_response = requests.post(
+            f"{grafana_url}/api/auth/keys",
+            json={"name": "NetworkMonitorKey", "role": "Admin"},
+            auth=(grafana_user, grafana_password)
+        )
+        api_key_response.raise_for_status()
+        grafana_api_key = api_key_response.json()["key"]
+        print("Grafana API key generated successfully.")
+    except requests.RequestException as e:
+        print(f"Failed to generate Grafana API key automatically: {e}")
+        grafana_api_key = input("Please enter your Grafana API key manually: ")
+
+    config['grafana_api_key'] = grafana_api_key
+
+    # Save configuration to file
+    with open('network_monitor_config.json', 'w') as f:
+        json.dump(config, f, indent=2)
+
+    # Update global variables
+    update_global_variables(config)
+
+    return config
+
+def update_global_variables(config):
+    global PING_TARGETS, GRAFANA_API_KEY, OLLAMA_URL, OLLAMA_MODEL, OPENAI_API_KEY, ANTHROPIC_API_KEY, CUSTOM_LLM_URL, CUSTOM_LLM_API_KEY
+
+    PING_TARGETS = config['ping_targets']
+    GRAFANA_API_KEY = config['grafana_api_key']
+
+    llm_config = config['llm']
+    if llm_config['provider'] == 'ollama':
+        OLLAMA_URL = llm_config['url']
+        OLLAMA_MODEL = llm_config['model']
+    elif llm_config['provider'] == 'openai':
+        OPENAI_API_KEY = llm_config['api_key']
+    elif llm_config['provider'] == 'anthropic':
+        ANTHROPIC_API_KEY = llm_config['api_key']
+    elif llm_config['provider'] == 'custom':
+        CUSTOM_LLM_URL = llm_config['url']
+        CUSTOM_LLM_API_KEY = llm_config['api_key']
+
+def load_configuration():
+    if os.path.exists('network_monitor_config.json'):
+        with open('network_monitor_config.json', 'r') as f:
+            config = json.load(f)
+        update_global_variables(config)
+        return config
+    return None
 
 def main():
     setup_data_retention_policy()
     
-    llm_config, ping_targets = configure_network_monitor()
-    update_ping_targets(ping_targets)
+    global config
+    if not config:
+        config = configure_network_monitor()
     
     last_speed_test_time = 0
     last_report_time = 0
@@ -587,7 +654,7 @@ def main():
             if current_time - last_report_time >= 900:  # 900 seconds = 15 minutes
                 logging.info("Generating new network report")
                 extended_data = get_extended_network_data()
-                report = generate_network_report(extended_data, llm_config)
+                report = generate_network_report(extended_data, config['llm'])
                 write_report_to_influxdb(report)
                 last_report_time = current_time
             
@@ -603,6 +670,11 @@ def main():
         time.sleep(1)  # Wait for 1 second before the next measurement
 
 if __name__ == "__main__":
-    logging.info("Starting Enhanced Network Monitor with Speedtest Latency Metrics")
-    client = InfluxDBClient(host='localhost', port=8086, database=INFLUXDB_DATABASE)
-    main()
+    parser = argparse.ArgumentParser(description="Network Monitor")
+    parser.add_argument("--configure", action="store_true", help="Run in configuration mode")
+    args = parser.parse_args()
+
+    if args.configure:
+        configure_network_monitor()
+    else:
+        main()

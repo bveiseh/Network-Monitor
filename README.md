@@ -15,6 +15,8 @@ The Enhanced Network Monitor is a Python-based tool designed to continuously mon
 
 ## Installation
 
+Choose one of the following installation methods based on your preference and system setup:
+
 ### Option 1: Using Docker (Recommended)
 
 1. Ensure you have Docker and Docker Compose installed on your system.
@@ -25,16 +27,26 @@ The Enhanced Network Monitor is a Python-based tool designed to continuously mon
    cd enhanced-network-monitor
    ```
 
-3. Start the services:
+3. Run the Docker installation script:
    ```
-   docker-compose up -d
+   ./install_network_monitor.sh
    ```
 
-4. Access Grafana at `http://localhost:9834` (default credentials: admin/admin)
+4. Follow the prompts to configure your network monitor:
+   - Choose your preferred LLM provider (Ollama, OpenAI, Anthropic, or Custom)
+   - Enter the required details for your chosen LLM provider
+   - Specify your ping targets (defaults are provided)
 
-### Option 2: Using Bash (Manual Installation)
+5. The installation script will:
+   - Start the necessary Docker containers (InfluxDB, Grafana, and the network monitor)
+   - Configure Grafana with an automatically generated API key
+   - Import the pre-configured dashboard
 
-1. Ensure you have Python 3.6+ installed on your system.
+6. Access Grafana at `http://localhost:9834` (default credentials: admin/admin)
+
+### Option 2: Using Bash (Direct Installation)
+
+1. Ensure you have sudo privileges on your system.
 
 2. Clone the repository:
    ```
@@ -42,56 +54,29 @@ The Enhanced Network Monitor is a Python-based tool designed to continuously mon
    cd enhanced-network-monitor
    ```
 
-3. Make the installation script executable:
+3. Run the Bash installation script:
    ```
-   chmod +x install_network_monitor.sh
-   ```
-
-4. Run the installation script:
-   ```
-   ./install_network_monitor.sh
+   sudo ./install_network_monitor_bash.sh
    ```
 
-5. The script will install necessary packages, set up a Python virtual environment, install required Python packages, configure InfluxDB and Grafana, and create a systemd service for the network monitor.
+4. Follow the prompts to configure your network monitor (same as in the Docker installation)
+
+5. The script will:
+   - Install necessary packages
+   - Set up a Python virtual environment
+   - Install required Python packages
+   - Configure InfluxDB and Grafana
+   - Create and start a systemd service for the network monitor
 
 6. Access Grafana at `http://localhost:3000` (default credentials: admin/admin)
 
 ## Configuration
 
-### Basic Configuration
+The Enhanced Network Monitor features an interactive configuration process that allows you to easily set up all aspects of the system. During the installation, you'll be prompted to configure:
 
-The main configuration options are in the `network_monitor.py` file:
+### LLM Provider
 
-```python
-# InfluxDB configuration
-INFLUXDB_HOST = 'localhost'
-INFLUXDB_PORT = 9834
-INFLUXDB_DATABASE = 'network_metrics'
-
-# Ping targets (configurable)
-PING_TARGETS = ['8.8.8.8', '1.1.1.1', '10.1.1.1']
-```
-
-### LLM Configuration
-
-One of the unique features of this network monitor is its ability to generate AI-powered network reports using various Language Model (LLM) providers. When you start the application, you'll be prompted to configure your preferred LLM provider.
-
-To configure the LLM:
-
-1. Start the network monitor application.
-2. You'll see the following prompt:
-   ```
-   LLM Configuration
-   1. Ollama (Recommended)
-   2. OpenAI
-   3. Anthropic
-   4. Custom (OpenAI API format)
-   Select LLM provider (1-4):
-   ```
-3. Enter the number corresponding to your preferred LLM provider.
-4. Follow the subsequent prompts to enter the necessary details (API key, model name, etc.) for your chosen provider.
-
-#### LLM Provider Options:
+Choose from one of the following options:
 
 1. **Ollama (Recommended)**: A local LLM option. You'll need to provide the Ollama URL and model name.
    - Recommended setup: Run Ollama on the same server as this network monitor, or use a remote/local network Ollama server.
@@ -106,58 +91,38 @@ To configure the LLM:
 
 4. **Custom**: Allows you to use any LLM provider that supports the OpenAI API format. You'll need to provide the API URL, key, and model name.
 
-#### Model Recommendations:
+### Ping Targets
 
-For this network monitoring application, smaller models are generally sufficient as the tasks are not highly sophisticated. However, using more advanced models can improve the quality and insights of the generated reports.
+You'll be prompted to enter up to three ping targets:
+1. First target (default: 1.1.1.1)
+2. Second target (default: 8.8.8.8)
+3. Your gateway IP address (default: 10.1.1.1)
 
-We recommend starting with smaller models (like the suggested ones above) and scaling up if you need more detailed or nuanced reports. The Ollama option with `llama3.1:8b-instruct` provides a good balance of performance, privacy, and resource usage for most use cases.
+It's recommended to include your gateway IP address to monitor your local network performance.
 
-## AI-Powered Network Reports
-
-The AI-powered network reports are a key feature of this monitor. Every 15 minutes, the system generates a concise, professional summary of the network's performance using the configured LLM. These reports:
-
-- Analyze the last 24 hours of latency and speed test data
-- Focus on significant issues, trends, or anomalies
-- Highlight any sustained issues or frequent disconnects
-- Provide a quick, high-level overview of network health
-
-These AI-generated reports offer a unique, intelligent insight into your network's performance, complementing the raw data and visualizations provided by the monitoring system.
+All of these configuration options are saved to a `network_monitor_config.json` file, which is used to persist your settings between runs.
 
 ## Usage
 
-Once configured and running, the network monitor will continuously collect data and store it in InfluxDB. You can view the data and AI-generated reports through the Grafana dashboard. Here are the commands to manage the network monitor service:
+Once configured and running, the network monitor will continuously collect data and store it in InfluxDB. You can view the data and AI-generated reports through the Grafana dashboard.
 
 ### For Docker installations:
 
 ```bash
-docker-compose start   # Start all services defined in docker-compose.yml
+docker-compose start   # Start all services
 docker-compose stop    # Stop all running services
 docker-compose restart # Restart all services
 docker-compose logs    # View logs from all services
 ```
 
-These commands allow you to:
-- Start the network monitor and associated services (InfluxDB, Grafana) if they're not running.
-- Stop all services gracefully when you need to pause monitoring.
-- Restart all services, which can be useful after configuration changes.
-- View the logs of all services, which is crucial for troubleshooting and monitoring the application's behavior.
-
 ### For Bash installations:
 
 ```bash
-sudo systemctl start network-monitor.service   # Start the network monitor service
-sudo systemctl stop network-monitor.service    # Stop the network monitor service
-sudo systemctl restart network-monitor.service # Restart the network monitor service
-sudo systemctl status network-monitor.service  # Check the current status of the service
+sudo systemctl start network-monitor   # Start the network monitor service
+sudo systemctl stop network-monitor    # Stop the network monitor service
+sudo systemctl restart network-monitor # Restart the network monitor service
+sudo systemctl status network-monitor  # Check the current status of the service
 ```
-
-These commands allow you to:
-- Start the network monitor service if it's not already running.
-- Stop the service when you need to pause monitoring or make configuration changes.
-- Restart the service, which is useful after making changes or if you suspect any issues.
-- Check the current status of the service, including whether it's running, stopped, or encountering any errors.
-
-Using these commands, you can easily manage the network monitor, ensuring it's running when you need it and allowing you to troubleshoot any issues that may arise.
 
 ## Accessing the Dashboard
 
@@ -176,9 +141,14 @@ Using these commands, you can easily manage the network monitor, ensuring it's r
   ```
 - For Bash installations, check the system logs:
   ```
-  sudo journalctl -u network-monitor.service
+  sudo journalctl -u network-monitor
   ```
 - Ensure InfluxDB and Grafana services are running
+- If you encounter issues with Grafana or InfluxDB, check their respective logs:
+  ```
+  sudo journalctl -u grafana-server
+  sudo journalctl -u influxdb
+  ```
 
 ## Contributing
 
