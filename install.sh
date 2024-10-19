@@ -27,23 +27,21 @@ sudo apt-get install -y python3-pip influxdb grafana speedtest-cli
 # Install Python dependencies
 pip3 install influxdb requests
 
-# Clone the repository if not already in it
+# Make sure the script is in the current directory
 if [ ! -f "network_monitor.py" ]; then
-    git clone https://github.com/bveiseh/Network-Monitor.git
-    cd Network-Monitor
+    echo "Error: network_monitor.py not found in the current directory."
+    echo "Please make sure you're in the correct directory containing the script."
+    exit 1
 fi
 
 # Make the script executable
 chmod +x network_monitor.py
 
-# Move the script to a suitable location
-sudo mv network_monitor.py /usr/local/bin/network-monitor
+# Create a symlink to make the script accessible system-wide
+sudo ln -sf "$(pwd)/network_monitor.py" /usr/local/bin/network-monitor
 
 # Ensure the shebang line is present
-sudo sed -i '1i#!/usr/bin/env python3' /usr/local/bin/network-monitor
-
-# Make sure the script is executable
-sudo chmod +x /usr/local/bin/network-monitor
+sed -i '1i#!/usr/bin/env python3' network_monitor.py
 
 # Get the device's IP address
 device_ip=$(hostname -I | awk '{print $1}')
