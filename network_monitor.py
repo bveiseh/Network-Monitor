@@ -10,13 +10,14 @@ import re
 import threading
 import math
 from statistics import mean, stdev
+import openai  # Add this import
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # InfluxDB configuration
 INFLUXDB_HOST = 'localhost'
-INFLUXDB_PORT = 8086
+INFLUXDB_PORT = 9834
 INFLUXDB_DATABASE = 'network_metrics'
 
 # Ping targets (configurable)
@@ -342,7 +343,7 @@ def get_extended_network_data():
         'sustained_issues': sustained_issues
     }
 
-def generate_network_report(extended_data):
+def generate_network_report(extended_data, llm_config):
     prompt = f"""
     You are a highly advanced, professional AI network monitoring system. Your task is to analyze network performance data and provide a concise, factual summary focusing only on significant issues or trends. Use the following data for your analysis:
 
@@ -373,18 +374,55 @@ def generate_network_report(extended_data):
     """
 
     try:
-        response = requests.post(OLLAMA_URL, json={
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.3,
-                "max_tokens": 150
+        if llm_config['provider'] == 'ollama':
+            response = requests.post(f"{llm_config['url']}/api/generate", json={
+                "model": llm_config['model'],
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "max_tokens": 150
+                }
+            }, timeout=200)
+            response.raise_for_status()
+            report = response.json().get('response', '').strip()
+        elif llm_config['provider'] == 'openai':
+            openai.api_key = llm_config['api_key']
+            response = openai.Completion.create(
+                engine=llm_config['model'],
+                prompt=prompt,
+                max_tokens=150,
+                temperature=0.3
+            )
+            report = response.choices[0].text.strip()
+        elif llm_config['provider'] == 'anthropic':
+            headers = {
+                "Content-Type": "application/json",
+                "X-API-Key": llm_config['api_key']
             }
-        }, timeout=200)  # 200 seconds timeout
-        response.raise_for_status()
-        
-        report = response.json().get('response', '').strip()
+            data = {
+                "prompt": prompt,
+                "model": llm_config['model'],
+                "max_tokens_to_sample": 150,
+                "temperature": 0.3
+            }
+            response = requests.post("https://api.anthropic.com/v1/complete", headers=headers, json=data, timeout=200)
+            response.raise_for_status()
+            report = response.json().get('completion', '').strip()
+        elif llm_config['provider'] == 'custom':
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {llm_config['api_key']}"
+            }
+            data = {
+                "model": llm_config['model'],
+                "prompt": prompt,
+                "max_tokens": 150,
+                "temperature": 0.3
+            }
+            response = requests.post(llm_config['url'], headers=headers, json=data, timeout=200)
+            response.raise_for_status()
+            report = response.json().get('choices', [{}])[0].get('text', '').strip()
         
         # Post-process the report
         sentences = report.split('.')
@@ -392,12 +430,9 @@ def generate_network_report(extended_data):
             report = '. '.join(sentences[:3]) + '.'
         
         return report.strip()
-    except requests.RequestException as e:
+    except Exception as e:
         logging.error(f"Error generating network report: {str(e)}")
         return "Network report unavailable due to a temporary issue."
-    except json.JSONDecodeError as e:
-        logging.error(f"Error parsing Ollama response: {str(e)}")
-        return "Unable to generate network report at this time."
 
 def write_report_to_influxdb(report):
     """Write the generated report to InfluxDB."""
@@ -455,8 +490,40 @@ def purge_old_data():
     
     logging.info("Purged data older than 30 days from all measurements")
 
+def configure_llm():
+    print("LLM Configuration")
+    print("1. Ollama")
+    print("2. OpenAI")
+    print("3. Anthropic")
+    print("4. Custom (OpenAI API format)")
+    
+    choice = input("Select LLM provider (1-4): ")
+    
+    if choice == '1':
+        url = input("Enter Ollama URL (default: http://localhost:11434): ") or "http://localhost:11434"
+        model = input("Enter Ollama model name: ")
+        return {'provider': 'ollama', 'url': url, 'model': model}
+    elif choice == '2':
+        api_key = input("Enter OpenAI API key: ")
+        model = input("Enter OpenAI model name (e.g., gpt-4): ")
+        return {'provider': 'openai', 'api_key': api_key, 'model': model}
+    elif choice == '3':
+        api_key = input("Enter Anthropic API key: ")
+        model = input("Enter Anthropic model name (e.g., claude-2): ")
+        return {'provider': 'anthropic', 'api_key': api_key, 'model': model}
+    elif choice == '4':
+        url = input("Enter custom LLM API URL: ")
+        api_key = input("Enter API key (if required): ")
+        model = input("Enter model name: ")
+        return {'provider': 'custom', 'url': url, 'api_key': api_key, 'model': model}
+    else:
+        print("Invalid choice. Using default Ollama configuration.")
+        return {'provider': 'ollama', 'url': "http://localhost:11434", 'model': "llama2"}
+
 def main():
     setup_data_retention_policy()
+    
+    llm_config = configure_llm()
     
     last_speed_test_time = 0
     last_report_time = 0
@@ -498,7 +565,7 @@ def main():
             if current_time - last_report_time >= 900:  # 900 seconds = 15 minutes
                 logging.info("Generating new network report")
                 extended_data = get_extended_network_data()
-                report = generate_network_report(extended_data)
+                report = generate_network_report(extended_data, llm_config)
                 write_report_to_influxdb(report)
                 last_report_time = current_time
             
