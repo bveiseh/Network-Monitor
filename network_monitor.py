@@ -20,8 +20,8 @@ INFLUXDB_HOST = 'localhost'
 INFLUXDB_PORT = 9834
 INFLUXDB_DATABASE = 'network_metrics'
 
-# Ping targets (configurable)
-PING_TARGETS = ['8.8.8.8', '1.1.1.1', '10.1.1.1']
+# Ping targets (will be set in configure_network_monitor)
+PING_TARGETS = []
 
 # Connect to InfluxDB
 client = InfluxDBClient(host=INFLUXDB_HOST, port=INFLUXDB_PORT)
@@ -490,8 +490,11 @@ def purge_old_data():
     
     logging.info("Purged data older than 30 days from all measurements")
 
-def configure_llm():
-    print("LLM Configuration")
+def configure_network_monitor():
+    print("Network Monitor Configuration")
+    
+    # LLM Configuration
+    print("\nLLM Configuration")
     print("1. Ollama")
     print("2. OpenAI")
     print("3. Anthropic")
@@ -502,28 +505,47 @@ def configure_llm():
     if choice == '1':
         url = input("Enter Ollama URL (default: http://localhost:11434): ") or "http://localhost:11434"
         model = input("Enter Ollama model name: ")
-        return {'provider': 'ollama', 'url': url, 'model': model}
+        llm_config = {'provider': 'ollama', 'url': url, 'model': model}
     elif choice == '2':
         api_key = input("Enter OpenAI API key: ")
-        model = input("Enter OpenAI model name (e.g., gpt-4): ")
-        return {'provider': 'openai', 'api_key': api_key, 'model': model}
+        model = input("Enter OpenAI model name (e.g., gpt-4o-mini): ")
+        llm_config = {'provider': 'openai', 'api_key': api_key, 'model': model}
     elif choice == '3':
         api_key = input("Enter Anthropic API key: ")
-        model = input("Enter Anthropic model name (e.g., claude-2): ")
-        return {'provider': 'anthropic', 'api_key': api_key, 'model': model}
+        model = input("Enter Anthropic model name (e.g., claude-3-sonnet): ")
+        llm_config = {'provider': 'anthropic', 'api_key': api_key, 'model': model}
     elif choice == '4':
         url = input("Enter custom LLM API URL: ")
         api_key = input("Enter API key (if required): ")
         model = input("Enter model name: ")
-        return {'provider': 'custom', 'url': url, 'api_key': api_key, 'model': model}
+        llm_config = {'provider': 'custom', 'url': url, 'api_key': api_key, 'model': model}
     else:
         print("Invalid choice. Using default Ollama configuration.")
-        return {'provider': 'ollama', 'url': "http://localhost:11434", 'model': "llama2"}
+        llm_config = {'provider': 'ollama', 'url': "http://localhost:11434", 'model': "llama2"}
+
+    # Ping Target Configuration
+    print("\nPing Target Configuration")
+    print("Recommended targets: 1.1.1.1, 8.8.8.8")
+    print("Current gateway target: 10.1.1.1")
+    
+    targets = []
+    targets.append(input("Enter first ping target (default: 1.1.1.1): ") or "1.1.1.1")
+    targets.append(input("Enter second ping target (default: 8.8.8.8): ") or "8.8.8.8")
+    gateway = input("Enter your gateway IP address (default: 10.1.1.1): ") or "10.1.1.1"
+    targets.append(gateway)
+
+    return llm_config, targets
+
+# Update the global PING_TARGETS variable
+def update_ping_targets(targets):
+    global PING_TARGETS
+    PING_TARGETS = targets
 
 def main():
     setup_data_retention_policy()
     
-    llm_config = configure_llm()
+    llm_config, ping_targets = configure_network_monitor()
+    update_ping_targets(ping_targets)
     
     last_speed_test_time = 0
     last_report_time = 0
